@@ -246,12 +246,10 @@ async function drainQueuedEntry(opts: {
   onFailed?: (entry: QueuedDelivery, errMsg: string) => void;
 }): Promise<"recovered" | "failed" | "moved-to-failed" | "already-gone"> {
   const { entry } = opts;
-  if (entry.recoveryState === "send_attempt_started") {
-    opts.log.warn(
-      `Delivery entry ${entry.id} was interrupted before platform outcome was known; replaying`,
-    );
-  }
-  if (entry.recoveryState === "unknown_after_send") {
+  if (
+    entry.recoveryState === "send_attempt_started" ||
+    entry.recoveryState === "unknown_after_send"
+  ) {
     const reconciliation = await reconcileUnknownQueuedDelivery({
       entry,
       cfg: opts.cfg,
@@ -272,16 +270,16 @@ async function drainQueuedEntry(opts: {
     }
     if (reconciliation?.status === "not_sent") {
       opts.log.info(
-        `Delivery entry ${entry.id} reconciled unknown_after_send as not sent; replaying`,
+        `Delivery entry ${entry.id} reconciled ${entry.recoveryState} as not sent; replaying`,
       );
     } else {
       const errMsg =
         reconciliation?.status === "unresolved" && reconciliation.error
-          ? `delivery state is unknown_after_send and reconciliation is unresolved: ${reconciliation.error}`
-          : "delivery state is unknown_after_send; refusing blind replay without adapter reconciliation";
+          ? `delivery state is ${entry.recoveryState} and reconciliation is unresolved: ${reconciliation.error}`
+          : `delivery state is ${entry.recoveryState}; refusing blind replay without adapter reconciliation`;
       opts.log.warn(`Delivery entry ${entry.id} ${errMsg}`);
       opts.onFailed?.(entry, errMsg);
-      if (reconciliation?.status === "unresolved" && reconciliation.retryable === true) {
+      if (reconciliation === null || reconciliation.retryable === true) {
         try {
           await failDelivery(entry.id, errMsg, opts.stateDir);
           return "failed";

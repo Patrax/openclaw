@@ -232,6 +232,34 @@ describe("message lifecycle primitives", () => {
     );
   });
 
+  it("does not fallback-send after a successful preview edit when finalization hooks fail", async () => {
+    const deliverNormally = vi.fn(async () => undefined);
+    const onPreviewFinalized = vi.fn(async () => {
+      throw new Error("receipt side effect failed");
+    });
+    const editFinal = vi.fn(async () => undefined);
+
+    await expect(
+      deliverFinalizableLivePreview({
+        kind: "final",
+        payload: { text: "done" },
+        draft: {
+          flush: vi.fn(async () => undefined),
+          id: () => "preview-finalized-before-hook",
+          seal: vi.fn(async () => undefined),
+          clear: vi.fn(async () => undefined),
+        },
+        buildFinalEdit: (payload) => ({ text: payload.text }),
+        editFinal,
+        deliverNormally,
+        onPreviewFinalized,
+      }),
+    ).rejects.toThrow("receipt side effect failed");
+
+    expect(editFinal).toHaveBeenCalledWith("preview-finalized-before-hook", { text: "done" });
+    expect(deliverNormally).not.toHaveBeenCalled();
+  });
+
   it("creates receive contexts with explicit ack policy defaults", () => {
     const ctx = createMessageReceiveContext({
       id: "rx-1",

@@ -58,7 +58,12 @@ function resolveDeliveryTarget(params: DurableInboundReplyDeliveryParams): strin
   );
 }
 
-function resolveReplyToId(params: DurableInboundReplyDeliveryParams): string | null | undefined {
+export function resolveDurableInboundReplyToId(
+  params: Pick<DurableInboundReplyDeliveryParams, "ctxPayload" | "payload" | "replyToId">,
+): string | null | undefined {
+  if (params.replyToId === null || params.payload.replyToId === null) {
+    return null;
+  }
   return (
     normalizeOptionalString(params.replyToId) ??
     normalizeOptionalString(params.payload.replyToId) ??
@@ -118,7 +123,7 @@ export async function deliverInboundReplyWithMessageSendContext(
     return { status: "unsupported", reason: "missing_target" };
   }
 
-  const replyToId = resolveReplyToId(params);
+  const replyToId = resolveDurableInboundReplyToId(params);
   const threadId = resolveThreadId(params);
   const requiredCapabilities =
     params.requiredCapabilities ??

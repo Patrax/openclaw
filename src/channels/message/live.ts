@@ -143,15 +143,10 @@ export async function deliverFinalizableLivePreview<TPayload, TId, TEdit>(params
     const previewId = params.draft.id();
     if (previewId !== undefined) {
       await params.draft.seal?.();
+      let editSucceeded = false;
       try {
         await params.editFinal(previewId, edit);
-        const finalizedId = params.resolveFinalizedId?.(previewId, edit) ?? previewId;
-        const receipt =
-          params.createPreviewReceipt?.(finalizedId, edit) ??
-          createPreviewMessageReceipt({ id: finalizedId });
-        liveState = markLiveMessageFinalized(liveState, receipt);
-        await params.onPreviewFinalized?.(finalizedId, receipt, liveState);
-        return { kind: "preview-finalized", liveState };
+        editSucceeded = true;
       } catch (err) {
         params.logPreviewEditFailure?.(err);
         const decision =
@@ -175,6 +170,15 @@ export async function deliverFinalizableLivePreview<TPayload, TId, TEdit>(params
           };
           return { kind: "preview-retained", liveState };
         }
+      }
+      if (editSucceeded) {
+        const finalizedId = params.resolveFinalizedId?.(previewId, edit) ?? previewId;
+        const receipt =
+          params.createPreviewReceipt?.(finalizedId, edit) ??
+          createPreviewMessageReceipt({ id: finalizedId });
+        liveState = markLiveMessageFinalized(liveState, receipt);
+        await params.onPreviewFinalized?.(finalizedId, receipt, liveState);
+        return { kind: "preview-finalized", liveState };
       }
     }
   }

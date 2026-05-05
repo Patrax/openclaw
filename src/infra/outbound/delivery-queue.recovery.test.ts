@@ -108,7 +108,7 @@ describe("delivery-queue recovery", () => {
     expect(entries[0]?.lastError).toBe("network down");
   });
 
-  it("does not blindly replay entries abandoned after platform send may have started", async () => {
+  it("retains entries abandoned after platform send may have started without reconciliation", async () => {
     const id = await enqueueDelivery(
       { channel: "demo-channel-a", to: "+1", payloads: [{ text: "maybe sent" }] },
       tmpDir(),
@@ -130,12 +130,15 @@ describe("delivery-queue recovery", () => {
       skippedMaxRetries: 0,
       deferredBackoff: 0,
     });
-    expect(await loadPendingDeliveries(tmpDir())).toHaveLength(0);
-    expect(fs.existsSync(path.join(tmpDir(), "delivery-queue", "failed", `${id}.json`))).toBe(true);
+    const entries = await loadPendingDeliveries(tmpDir());
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe(id);
+    expect(entries[0]?.retryCount).toBe(1);
+    expect(entries[0]?.lastError).toContain("unknown_after_send");
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("unknown_after_send"));
   });
 
-  it("replays entries interrupted before platform outcome is known", async () => {
+  it("retains started entries without reconciliation instead of blindly replaying", async () => {
     const id = await enqueueDelivery(
       { channel: "demo-channel-a", to: "+1", payloads: [{ text: "not yet sent" }] },
       tmpDir(),
@@ -150,6 +153,43 @@ describe("delivery-queue recovery", () => {
     const log = createRecoveryLog();
     const { result } = await runRecovery({ deliver, log });
 
+    expect(deliver).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      recovered: 0,
+      failed: 1,
+      skippedMaxRetries: 0,
+      deferredBackoff: 0,
+    });
+    const entries = await loadPendingDeliveries(tmpDir());
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe(id);
+    expect(entries[0]?.retryCount).toBe(1);
+    expect(entries[0]?.lastError).toContain("send_attempt_started");
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("refusing blind replay without adapter reconciliation"),
+    );
+  });
+
+  it("replays started entries only after adapter proves they were not sent", async () => {
+    const id = await enqueueDelivery(
+      { channel: "demo-channel-a", to: "+1", payloads: [{ text: "not yet sent" }] },
+      tmpDir(),
+    );
+    setQueuedEntryState(tmpDir(), id, {
+      retryCount: 0,
+      platformSendStartedAt: Date.now(),
+      recoveryState: "send_attempt_started",
+    });
+    loadChannelMessageAdapterMock.mockResolvedValue({
+      durableFinal: {
+        capabilities: { reconcileUnknownSend: true },
+        reconcileUnknownSend: vi.fn().mockResolvedValue({ status: "not_sent" }),
+      },
+    });
+
+    const deliver = vi.fn().mockResolvedValue([]);
+    const { result } = await runRecovery({ deliver });
+
     expect(deliver).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "demo-channel-a", to: "+1", skipQueue: true }),
     );
@@ -160,7 +200,6 @@ describe("delivery-queue recovery", () => {
       deferredBackoff: 0,
     });
     expect(await loadPendingDeliveries(tmpDir())).toHaveLength(0);
-    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("before platform outcome"));
   });
 
   it("acks unknown-after-send entries reconciled as already sent", async () => {
@@ -316,8 +355,10 @@ describe("delivery-queue recovery", () => {
     expect(reconcileUnknownSend).not.toHaveBeenCalled();
     expect(deliver).not.toHaveBeenCalled();
     expect(result.failed).toBe(1);
-    expect(await loadPendingDeliveries(tmpDir())).toHaveLength(0);
-    expect(fs.existsSync(path.join(tmpDir(), "delivery-queue", "failed", `${id}.json`))).toBe(true);
+    const entries = await loadPendingDeliveries(tmpDir());
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe(id);
+    expect(entries[0]?.retryCount).toBe(1);
     expect(log.warn).toHaveBeenCalledWith(
       expect.stringContaining("refusing blind replay without adapter reconciliation"),
     );
