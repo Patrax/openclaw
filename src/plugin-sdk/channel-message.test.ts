@@ -2,6 +2,23 @@ import { describe, expect, it, vi } from "vitest";
 import { defineChannelMessageAdapter } from "./channel-message.js";
 
 describe("defineChannelMessageAdapter", () => {
+  it("keeps new and legacy channel plugin SDK subpaths importable", async () => {
+    const [channelMessage, channelReplyPipeline, compat] = await Promise.all([
+      import("openclaw/plugin-sdk/channel-message"),
+      import("openclaw/plugin-sdk/channel-reply-pipeline"),
+      import("openclaw/plugin-sdk/compat"),
+    ]);
+
+    expect(channelMessage.createChannelMessageReplyPipeline).toBe(
+      channelReplyPipeline.createChannelReplyPipeline,
+    );
+    expect(channelMessage.createReplyPrefixOptions).toBe(
+      channelReplyPipeline.createReplyPrefixOptions,
+    );
+    expect(channelMessage.createTypingCallbacks).toBe(channelReplyPipeline.createTypingCallbacks);
+    expect(typeof compat.createChannelReplyPipeline).toBe("function");
+  });
+
   it("defaults new message adapters to plugin-owned receive acknowledgement", () => {
     const adapter = defineChannelMessageAdapter({
       id: "demo",

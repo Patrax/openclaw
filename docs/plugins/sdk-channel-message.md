@@ -173,6 +173,11 @@ payload and delivery options.
 | `afterSendSuccess`     | Channel-local after-send side effects run once.                                      |
 | `afterCommit`          | Channel-local after-commit side effects run once.                                    |
 
+Required durable final delivery also requires `reconcileUnknownSend`. If the
+adapter cannot determine whether a started/unknown send reached the platform,
+do not declare that capability; core will reject the required durable path
+before queueing and callers can use legacy or best-effort delivery instead.
+
 When a caller needs durable delivery, derive requirements instead of building
 maps by hand:
 
@@ -204,7 +209,13 @@ A durable final send has stricter semantics than legacy channel-owned delivery:
 - Treat `unsupported` as a pre-intent result only.
 - For required durability, fail before platform I/O if the queue cannot record
   that platform send has started.
+- For required final delivery, preflight `reconcileUnknownSend`; recovery must
+  be able to ack an already-sent message or replay only after the adapter proves
+  the original send did not happen.
+- For `best_effort`, queue write failures may fall back to direct platform I/O.
 - Forward abort signals to media loading and platform sends.
+- Run after-commit hooks after queue ack; direct best-effort fallback runs them
+  after successful platform I/O because there is no durable queue commit.
 - Return receipts for every visible platform message id.
 - Use `reconcileUnknownSend` when a platform can check whether an uncertain send
   already reached the user.

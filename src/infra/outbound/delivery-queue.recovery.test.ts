@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { attachOutboundDeliveryCommitHook } from "./delivery-commit-hooks.js";
 import {
   enqueueDelivery,
   loadPendingDeliveries,
@@ -414,6 +415,36 @@ describe("delivery-queue recovery", () => {
     await runRecovery({ deliver });
 
     expect(deliver).toHaveBeenCalledWith(expect.objectContaining({ skipQueue: true }));
+  });
+
+  it("runs recovered send commit hooks only after the queue entry is acked", async () => {
+    const id = await enqueueDelivery(
+      { channel: "demo-channel-a", to: "+1", payloads: [{ text: "a" }] },
+      tmpDir(),
+    );
+    const order: string[] = [];
+    const result = attachOutboundDeliveryCommitHook(
+      { channel: "demo-channel-a", messageId: "m1" },
+      async () => {
+        order.push(
+          fs.existsSync(path.join(tmpDir(), "delivery-queue", "pending", `${id}.json`))
+            ? "commit-before-ack"
+            : "commit-after-ack",
+        );
+      },
+    );
+    const deliver = vi.fn(async () => {
+      order.push("deliver");
+      return [result];
+    });
+
+    await runRecovery({ deliver });
+
+    expect(order).toEqual(["deliver", "commit-after-ack"]);
+    expect(await loadPendingDeliveries(tmpDir())).toHaveLength(0);
+    expect(fs.existsSync(path.join(tmpDir(), "delivery-queue", "pending", `${id}.json`))).toBe(
+      false,
+    );
   });
 
   it("replays stored delivery options during recovery", async () => {

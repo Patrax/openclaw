@@ -189,6 +189,38 @@ describe("withDurableMessageSendContext", () => {
     );
   });
 
+  it("maps best-effort durability to best-effort queue policy", async () => {
+    deliverOutboundPayloads.mockImplementationOnce(async (params: DeliveryIntentCallbackParams) => {
+      params.onDeliveryIntent?.({
+        id: "intent-best-effort",
+        channel: "telegram",
+        to: "chat-1",
+        queuePolicy: "best_effort",
+      });
+      return [{ channel: "telegram", messageId: "msg-1" }];
+    });
+
+    const result = await sendDurableMessageBatch({
+      cfg,
+      channel: "telegram",
+      to: "chat-1",
+      payloads: [{ text: "hello" }],
+      durability: "best_effort",
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "sent",
+        deliveryIntent: expect.objectContaining({ id: "intent-best-effort" }),
+      }),
+    );
+    expect(deliverOutboundPayloads).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        queuePolicy: "best_effort",
+      }),
+    );
+  });
+
   it("supports preview, edit, and delete send-context hooks", async () => {
     const receipt = {
       primaryPlatformMessageId: "preview-1",

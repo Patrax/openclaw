@@ -120,6 +120,7 @@ describe("channel turn kernel", () => {
           text: true,
           thread: true,
           messageSendingHooks: true,
+          reconcileUnknownSend: true,
         },
       }),
     );
@@ -201,7 +202,10 @@ describe("channel turn kernel", () => {
     );
     expect(resolveOutboundDurableFinalDeliverySupport).toHaveBeenCalledWith(
       expect.objectContaining({
-        requirements: { text: true },
+        requirements: {
+          text: true,
+          reconcileUnknownSend: true,
+        },
       }),
     );
     expect(onDelivered).toHaveBeenCalledWith(
@@ -250,6 +254,7 @@ describe("channel turn kernel", () => {
         requirements: {
           text: true,
           messageSendingHooks: true,
+          reconcileUnknownSend: true,
         },
       }),
     );

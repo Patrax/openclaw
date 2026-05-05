@@ -125,14 +125,17 @@ export async function deliverInboundReplyWithMessageSendContext(
 
   const replyToId = resolveDurableInboundReplyToId(params);
   const threadId = resolveThreadId(params);
-  const requiredCapabilities =
-    params.requiredCapabilities ??
-    deriveDurableFinalDeliveryRequirements({
-      payload: params.payload,
-      replyToId,
-      threadId,
-      silent: params.silent,
-    });
+  const requiredCapabilities = {
+    ...(params.requiredCapabilities ??
+      deriveDurableFinalDeliveryRequirements({
+        payload: params.payload,
+        replyToId,
+        threadId,
+        silent: params.silent,
+        reconcileUnknownSend: true,
+      })),
+    reconcileUnknownSend: true,
+  };
 
   let support: Awaited<ReturnType<typeof resolveOutboundDurableFinalDeliverySupport>>;
   try {

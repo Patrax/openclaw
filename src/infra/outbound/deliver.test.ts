@@ -399,6 +399,109 @@ describe("deliverOutboundPayloads", () => {
     ).resolves.toEqual({ ok: true });
   });
 
+  it("requires a real reconciler for required unknown-send recovery support", async () => {
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "matrix",
+          source: "test",
+          plugin: {
+            ...createOutboundTestPlugin({
+              id: "matrix",
+              outbound: {
+                deliveryMode: "direct",
+                sendText: async () => ({ channel: "matrix", messageId: "outbound" }),
+              },
+            }),
+            message: {
+              id: "matrix",
+              durableFinal: {
+                capabilities: {
+                  text: true,
+                  reconcileUnknownSend: true,
+                },
+              },
+              send: {
+                text: async () => ({
+                  messageId: "message",
+                  receipt: createMessageReceiptFromOutboundResults({
+                    results: [{ channel: "matrix", messageId: "message" }],
+                    kind: "text",
+                  }),
+                }),
+              },
+            },
+          },
+        },
+      ]),
+    );
+
+    await expect(
+      resolveOutboundDurableFinalDeliverySupport({
+        cfg: {},
+        channel: "matrix",
+        requirements: {
+          text: true,
+          reconcileUnknownSend: true,
+        },
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      reason: "capability_mismatch",
+      capability: "reconcileUnknownSend",
+    });
+  });
+
+  it("accepts required unknown-send recovery only when the adapter declares and implements it", async () => {
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "matrix",
+          source: "test",
+          plugin: {
+            ...createOutboundTestPlugin({
+              id: "matrix",
+              outbound: {
+                deliveryMode: "direct",
+                sendText: async () => ({ channel: "matrix", messageId: "outbound" }),
+              },
+            }),
+            message: {
+              id: "matrix",
+              durableFinal: {
+                capabilities: {
+                  text: true,
+                  reconcileUnknownSend: true,
+                },
+                reconcileUnknownSend: async () => ({ status: "not_sent" }),
+              },
+              send: {
+                text: async () => ({
+                  messageId: "message",
+                  receipt: createMessageReceiptFromOutboundResults({
+                    results: [{ channel: "matrix", messageId: "message" }],
+                    kind: "text",
+                  }),
+                }),
+              },
+            },
+          },
+        },
+      ]),
+    );
+
+    await expect(
+      resolveOutboundDurableFinalDeliverySupport({
+        cfg: {},
+        channel: "matrix",
+        requirements: {
+          text: true,
+          reconcileUnknownSend: true,
+        },
+      }),
+    ).resolves.toEqual({ ok: true });
+  });
+
   it("sends text through the channel message adapter when present", async () => {
     const messageSendText = vi.fn(async () => ({
       messageId: "message-adapter-1",
@@ -671,6 +774,77 @@ describe("deliverOutboundPayloads", () => {
     ).rejects.toThrow("queue offline");
 
     expect(sendMatrix).not.toHaveBeenCalled();
+  });
+
+  it("falls back to direct send when best-effort queue writes fail", async () => {
+    queueMocks.enqueueDelivery.mockRejectedValueOnce(new Error("queue offline"));
+    const sendMatrix = vi.fn().mockResolvedValue({ messageId: "m1" });
+
+    await expect(
+      deliverOutboundPayloads({
+        cfg: {},
+        channel: "matrix",
+        to: "!room:example",
+        payloads: [{ text: "hi" }],
+        deps: { matrix: sendMatrix },
+        queuePolicy: "best_effort",
+      }),
+    ).resolves.toEqual([expect.objectContaining({ messageId: "m1" })]);
+
+    expect(sendMatrix).toHaveBeenCalled();
+  });
+
+  it("runs afterCommit hooks after best-effort queue fallback direct sends", async () => {
+    queueMocks.enqueueDelivery.mockRejectedValueOnce(new Error("queue offline"));
+    const afterCommit = vi.fn();
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "matrix",
+          source: "test",
+          plugin: {
+            id: "matrix",
+            message: {
+              id: "matrix",
+              durableFinal: {
+                capabilities: {
+                  text: true,
+                  afterCommit: true,
+                },
+              },
+              send: {
+                lifecycle: {
+                  afterCommit,
+                },
+                text: async () => ({
+                  messageId: "message-adapter-1",
+                  receipt: createMessageReceiptFromOutboundResults({
+                    results: [{ channel: "matrix", messageId: "message-adapter-1" }],
+                    kind: "text",
+                  }),
+                }),
+              },
+            },
+          },
+        },
+      ]),
+    );
+
+    await deliverOutboundPayloads({
+      cfg: {},
+      channel: "matrix",
+      to: "!room:example",
+      payloads: [{ text: "hello" }],
+      queuePolicy: "best_effort",
+    });
+
+    expect(afterCommit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "text",
+        result: expect.objectContaining({ messageId: "message-adapter-1" }),
+      }),
+    );
+    expect(queueMocks.ackDelivery).not.toHaveBeenCalled();
   });
 
   it("requires the platform-send attempt marker before required durable platform I/O", async () => {

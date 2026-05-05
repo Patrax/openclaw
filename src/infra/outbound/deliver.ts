@@ -44,6 +44,11 @@ import { formatErrorMessage } from "../errors.js";
 import { throwIfAborted } from "./abort.js";
 import type { OutboundDeliveryResult } from "./deliver-types.js";
 import {
+  attachOutboundDeliveryCommitHook,
+  runOutboundDeliveryCommitHooks,
+  type OutboundDeliveryCommitHook,
+} from "./delivery-commit-hooks.js";
+import {
   ackDelivery,
   enqueueDelivery,
   failDelivery,
@@ -170,11 +175,6 @@ type ChannelHandler = {
 };
 
 type ChannelMessageLifecycleContext = ChannelMessageSendAttemptContext;
-type OutboundDeliveryCommitHook = () => Promise<void>;
-const outboundDeliveryCommitHooks = new WeakMap<
-  OutboundDeliveryResult,
-  OutboundDeliveryCommitHook[]
->();
 
 type ChannelHandlerParams = {
   cfg: OpenClawConfig;
@@ -272,37 +272,6 @@ async function runChannelMessageSendWithLifecycle<
   }
 }
 
-function attachOutboundDeliveryCommitHook<T extends OutboundDeliveryResult>(
-  result: T,
-  hook?: OutboundDeliveryCommitHook,
-): T {
-  if (!hook) {
-    return result;
-  }
-  const hooks = outboundDeliveryCommitHooks.get(result) ?? [];
-  hooks.push(hook);
-  outboundDeliveryCommitHooks.set(result, hooks);
-  return result;
-}
-
-async function runOutboundDeliveryCommitHooks(
-  results: readonly OutboundDeliveryResult[],
-): Promise<void> {
-  for (const result of results) {
-    for (const hook of outboundDeliveryCommitHooks.get(result) ?? []) {
-      try {
-        await hook();
-      } catch (err) {
-        log.warn("Plugin message adapter after-commit hook failed.", {
-          channel: result.channel,
-          messageId: result.messageId,
-          error: formatErrorMessage(err),
-        });
-      }
-    }
-  }
-}
-
 export async function resolveOutboundDurableFinalDeliverySupport(params: {
   cfg: OpenClawConfig;
   channel: Exclude<OutboundChannel, "none">;
@@ -314,12 +283,20 @@ export async function resolveOutboundDurableFinalDeliverySupport(params: {
     return { ok: false, reason: "missing_outbound_handler" };
   }
 
+  const messageDurableFinal = message?.durableFinal;
   const durableFinal =
-    message?.durableFinal?.capabilities ?? outbound?.deliveryCapabilities?.durableFinal;
+    messageDurableFinal?.capabilities ?? outbound?.deliveryCapabilities?.durableFinal;
   for (const [capability, required] of Object.entries(params.requirements ?? {}) as Array<
     [DurableFinalDeliveryRequirement, boolean | undefined]
   >) {
     if (required === true && durableFinal?.[capability] !== true) {
+      return { ok: false, reason: "capability_mismatch", capability };
+    }
+    if (
+      required === true &&
+      capability === "reconcileUnknownSend" &&
+      typeof messageDurableFinal?.reconcileUnknownSend !== "function"
+    ) {
       return { ok: false, reason: "capability_mismatch", capability };
     }
   }
@@ -644,6 +621,8 @@ function collectPayloadMediaSources(plan: readonly OutboundPayloadPlan[]): strin
 export type DeliverOutboundPayloadsParams = DeliverOutboundPayloadsCoreParams & {
   /** @internal Skip write-ahead queue (used by crash-recovery to avoid re-enqueueing). */
   skipQueue?: boolean;
+  /** @internal Let recovery run commit hooks after it has acked the recovered queue entry. */
+  deferCommitHooks?: boolean;
   queuePolicy?: OutboundDeliveryQueuePolicy;
   renderedBatchPlan?: QueuedRenderedMessageBatchPlan;
   onDeliveryIntent?: (intent: OutboundDeliveryIntent) => void;
@@ -1191,6 +1170,12 @@ async function deliverOutboundPayloadsWithQueueCleanup(
         : {}),
     });
     platformResultsReturned = true;
+    if (!queueId) {
+      if (!params.deferCommitHooks) {
+        await runOutboundDeliveryCommitHooks(results);
+      }
+      return results;
+    }
     if (queueId) {
       if (hadPartialFailure) {
         await failDelivery(queueId, "partial delivery failure (bestEffort)").catch(() => {});

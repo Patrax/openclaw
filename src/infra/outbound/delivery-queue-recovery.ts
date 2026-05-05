@@ -3,6 +3,10 @@ import { loadChannelMessageAdapter } from "../../channels/plugins/message/load.j
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../errors.js";
 import {
+  isOutboundDeliveryResultArray,
+  runOutboundDeliveryCommitHooks,
+} from "./delivery-commit-hooks.js";
+import {
   ackDelivery,
   failDelivery,
   loadPendingDelivery,
@@ -24,6 +28,7 @@ export type DeliverFn = (
     cfg: OpenClawConfig;
   } & QueuedDeliveryPayload & {
       skipQueue?: boolean;
+      deferCommitHooks?: boolean;
     },
 ) => Promise<unknown>;
 
@@ -132,6 +137,7 @@ function buildRecoveryDeliverParams(entry: QueuedDelivery, cfg: OpenClawConfig) 
     session: entry.session,
     gatewayClientScopes: entry.gatewayClientScopes,
     skipQueue: true, // Prevent re-enqueueing during recovery.
+    deferCommitHooks: true,
   } satisfies Parameters<DeliverFn>[0];
 }
 
@@ -302,8 +308,11 @@ async function drainQueuedEntry(opts: {
     }
   }
   try {
-    await opts.deliver(buildRecoveryDeliverParams(entry, opts.cfg));
+    const result = await opts.deliver(buildRecoveryDeliverParams(entry, opts.cfg));
     await ackDelivery(entry.id, opts.stateDir);
+    if (isOutboundDeliveryResultArray(result)) {
+      await runOutboundDeliveryCommitHooks(result);
+    }
     opts.onRecovered?.(entry);
     return "recovered";
   } catch (err) {

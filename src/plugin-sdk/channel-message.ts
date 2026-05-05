@@ -21,6 +21,8 @@ export {
 export {
   createChannelReplyPipeline as createChannelMessageReplyPipeline,
   createReplyPrefixContext,
+  createReplyPrefixOptions,
+  createTypingCallbacks,
   resolveChannelSourceReplyDeliveryMode as resolveChannelMessageSourceReplyDeliveryMode,
 } from "./channel-reply-core.js";
 

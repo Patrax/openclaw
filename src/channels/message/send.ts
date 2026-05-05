@@ -103,6 +103,7 @@ export async function withDurableMessageSendContext<T>(
     ...deliveryParams
   } = params;
   const effectiveSignal = signal ?? abortSignal;
+  const queuePolicy = durability === "best_effort" ? "best_effort" : "required";
   let liveState = preview ?? createLiveMessageState<ReplyPayload>();
   const ctx: DurableMessageSendContext = {
     id: `${params.channel}:${params.to}`,
@@ -129,7 +130,7 @@ export async function withDurableMessageSendContext<T>(
           ...deliveryParams,
           payloads: rendered.payloads,
           renderedBatchPlan: rendered.plan,
-          queuePolicy: "required",
+          queuePolicy,
           ...(effectiveSignal ? { abortSignal: effectiveSignal } : {}),
           onDeliveryIntent: (intent) => {
             deliveryIntent = intent;
