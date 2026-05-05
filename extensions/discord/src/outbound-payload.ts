@@ -13,6 +13,7 @@ import {
   sendDiscordComponentMessageLazy,
 } from "./outbound-components.js";
 import { createDiscordPayloadSendContext } from "./outbound-send-context.js";
+import { createDiscordSendReceipt } from "./send.receipt.js";
 
 export async function sendDiscordOutboundPayload(params: {
   ctx: Parameters<NonNullable<ChannelOutboundAdapter["sendPayload"]>>[0];
@@ -84,7 +85,15 @@ export async function sendDiscordOutboundPayload(params: {
   const result = await sendPayloadMediaSequenceOrFallback({
     text: payload.text ?? "",
     mediaUrls,
-    fallbackResult: { messageId: "", channelId: sendContext.target },
+    fallbackResult: {
+      messageId: "",
+      channelId: sendContext.target,
+      receipt: createDiscordSendReceipt({
+        platformMessageIds: [],
+        channelId: sendContext.target,
+        kind: "unknown",
+      }),
+    },
     sendNoMedia: async () =>
       await sendContext.withRetry(
         async () =>
