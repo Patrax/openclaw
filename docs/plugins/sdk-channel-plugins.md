@@ -40,6 +40,9 @@ adapter declares which durable final-send capabilities the native transport
 actually supports and points text/media sends at the same transport functions as
 the legacy `outbound` adapter. Only declare a capability when a contract test
 proves the native side effect and returned receipt.
+For the full API contract, examples, capability matrix, receipt rules, live
+preview finalization, receive ack policy, tests, and migration table, see
+[Channel message API](/plugins/sdk-channel-message).
 If the existing `outbound` adapter already has the right send methods and
 capability metadata, use `createChannelMessageAdapterFromOutbound(...)` to
 derive the `message` adapter instead of hand-writing another bridge.

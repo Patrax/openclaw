@@ -732,6 +732,18 @@
     "target": "Codex Harness Context Engine Port"
   },
   {
+    "source": "Plugin refactor plan",
+    "target": "插件重构计划"
+  },
+  {
+    "source": "Retry policy",
+    "target": "重试策略"
+  },
+  {
+    "source": "Channel turn kernel",
+    "target": "频道轮次内核"
+  },
+  {
     "source": "/gateway/configuration#strict-validation",
     "target": "/gateway/configuration#strict-validation"
   },
