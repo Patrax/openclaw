@@ -137,6 +137,15 @@ export function createLaneTextDeliverer(params: CreateLaneTextDelivererParams) {
       return undefined;
     }
 
+    const deliveredStreamText = stream.lastDeliveredText?.();
+    if (
+      isFinal &&
+      deliveredStreamText !== undefined &&
+      deliveredStreamText !== firstChunk.trimEnd()
+    ) {
+      return undefined;
+    }
+
     params.markDelivered();
     if (buttons) {
       try {

@@ -137,6 +137,21 @@ describe("createLaneTextDeliverer", () => {
     expect(harness.sendPayload).not.toHaveBeenCalled();
   });
 
+  it("uses normal final delivery when the stream edit leaves stale text", async () => {
+    const answer = createTestDraftStream({ messageId: 999 });
+    answer.lastDeliveredText.mockReturnValue("working");
+    const harness = createHarness({ answerStream: answer });
+
+    const result = await deliverFinalAnswer(harness, "done");
+
+    expect(result.kind).toBe("sent");
+    expect(answer.update).toHaveBeenCalledWith("done");
+    expect(harness.clearDraftLane).toHaveBeenCalledTimes(1);
+    expect(harness.sendPayload).toHaveBeenCalledWith({ text: "done" });
+    expect(harness.markDelivered).not.toHaveBeenCalled();
+    expect(harness.lanes.answer.finalized).toBe(true);
+  });
+
   it("falls back to normal delivery when no stream exists", async () => {
     const harness = createHarness({ answerStream: null });
 
