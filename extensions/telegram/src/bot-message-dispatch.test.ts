@@ -514,6 +514,39 @@ describe("dispatchTelegramMessage draft streaming", () => {
     expect(deliverReplies).not.toHaveBeenCalled();
   });
 
+  it("queues media-only final Telegram replies through outbound delivery when available", async () => {
+    deliverInboundReplyWithMessageSendContext.mockResolvedValue({
+      status: "handled_visible",
+      delivery: {
+        messageIds: ["1002"],
+        visibleReplySent: true,
+      },
+    });
+    dispatchReplyWithBufferedBlockDispatcher.mockImplementation(async ({ dispatcherOptions }) => {
+      await dispatcherOptions.deliver({ mediaUrl: "file:///tmp/final.png" }, { kind: "final" });
+      return { queuedFinal: true };
+    });
+
+    await dispatchWithContext({
+      context: createContext(),
+      streamMode: "off",
+      telegramDeps: telegramDepsForTest,
+    });
+
+    expect(deliverInboundReplyWithMessageSendContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        payload: expect.objectContaining({ mediaUrl: "file:///tmp/final.png" }),
+        info: { kind: "final" },
+        requiredCapabilities: expect.objectContaining({
+          media: true,
+          payload: true,
+        }),
+      }),
+    );
+    expect(deliverReplies).not.toHaveBeenCalled();
+  });
+
   it("skips answer draft preview for same-chat selected quotes", async () => {
     deliverInboundReplyWithMessageSendContext.mockResolvedValue({
       status: "unsupported",

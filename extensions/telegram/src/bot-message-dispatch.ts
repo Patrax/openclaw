@@ -1126,7 +1126,9 @@ export const dispatchTelegramMessage = async ({
                         const payloadWithoutSuppressedReasoning =
                           typeof payload.text === "string" ? { ...payload, text: "" } : payload;
                         clearPendingCompactionReplayBoundaryOnVisibleBoundary(
-                          await sendPayload(payloadWithoutSuppressedReasoning),
+                          await sendPayload(payloadWithoutSuppressedReasoning, {
+                            durable: info.kind === "final",
+                          }),
                         );
                       }
                       if (info.kind === "final") {
@@ -1150,7 +1152,7 @@ export const dispatchTelegramMessage = async ({
                       return;
                     }
                     clearPendingCompactionReplayBoundaryOnVisibleBoundary(
-                      await sendPayload(payload),
+                      await sendPayload(payload, { durable: info.kind === "final" }),
                     );
                     if (info.kind === "final") {
                       await flushBufferedFinalAnswer();
