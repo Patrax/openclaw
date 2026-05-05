@@ -90,6 +90,13 @@ Prefer returning an action-keyed map such as
 inherit another action's media args. A flat array still works for params that
 are intentionally shared across every exposed action.
 
+If your channel needs provider-specific shaping for `message(action="send")`,
+prefer `actions.prepareSendPayload(...)`. Put native cards, blocks, embeds, or
+other durable data under `payload.channelData.<channel>` and let core perform
+the actual send through the outbound/message adapter. Use
+`actions.handleAction(...)` for send only as a compatibility fallback for
+payloads that cannot be serialized and retried.
+
 If your platform stores extra scope inside conversation ids, keep that parsing
 in the plugin with `messaging.resolveSessionConversation(...)`. That is the
 canonical hook for mapping `rawId` to the base conversation id, optional thread

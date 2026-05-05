@@ -109,6 +109,49 @@ uses `manual` receive acknowledgement policy. That makes plugin-owned platform
 acknowledgement explicit without changing channels that acknowledge webhooks,
 sockets, or polling offsets outside generic receive context.
 
+## Message Tool Sends
+
+The shared `message(action="send")` path should use the same core delivery
+lifecycle as final replies. If a channel needs provider-specific shaping for the
+tool send, implement `actions.prepareSendPayload(...)` instead of sending from
+`actions.handleAction(...)`.
+
+`prepareSendPayload(...)` receives the normalized core `ReplyPayload` plus the
+full action context. Return a payload with channel-specific data in
+`payload.channelData.<channel>` and let core call `sendMessage(...)`,
+`deliverOutboundPayloads(...)`, the write-ahead queue, message-sending hooks,
+retry, recovery, and ack cleanup.
+
+Return `null` only when the send cannot be represented as a durable payload, for
+example because it contains a non-serializable component factory. Core will keep
+the legacy plugin action fallback for compatibility, but new channel send
+features should be expressible as durable payload data.
+
+```typescript
+export const demoActions: ChannelMessageActionAdapter = {
+  describeMessageTool: () => ({ actions: ["send"], capabilities: ["presentation"] }),
+  prepareSendPayload: ({ ctx, payload }) => {
+    if (ctx.action !== "send") {
+      return null;
+    }
+    return {
+      ...payload,
+      channelData: {
+        ...payload.channelData,
+        demo: {
+          ...(payload.channelData?.demo as object | undefined),
+          nativeCard: ctx.params.card,
+        },
+      },
+    };
+  },
+};
+```
+
+The outbound adapter then reads `payload.channelData.demo` inside `sendPayload`.
+This keeps platform-specific rendering in the plugin while core still owns
+persist, retry, recover, hooks, and ack.
+
 ## Durable Final Capabilities
 
 Durable final delivery is opt in per side effect. Core will only use generic

@@ -199,6 +199,12 @@ const discordMessageActions = {
     resolveRuntimeDiscordMessageActions()?.extractToolSend?.(ctx) ??
     discordMessageActionsImpl.extractToolSend?.(ctx) ??
     null,
+  prepareSendPayload: (
+    ctx: Parameters<NonNullable<ChannelMessageActionAdapter["prepareSendPayload"]>>[0],
+  ) =>
+    resolveRuntimeDiscordMessageActions()?.prepareSendPayload?.(ctx) ??
+    discordMessageActionsImpl.prepareSendPayload?.(ctx) ??
+    null,
   handleAction: async (
     ctx: Parameters<NonNullable<ChannelMessageActionAdapter["handleAction"]>>[0],
   ) => {

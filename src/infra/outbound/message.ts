@@ -1,4 +1,6 @@
+import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { OutboundMediaAccess } from "../../media/load-options.js";
 import type { PollInput } from "../../polls.js";
 import { normalizePollInput } from "../../polls.js";
 import {
@@ -12,6 +14,7 @@ import { resolveMessageChannelSelection } from "./channel-selection.js";
 import {
   deliverOutboundPayloads,
   type OutboundDeliveryResult,
+  type OutboundDeliveryQueuePolicy,
   type OutboundSendDeps,
 } from "./deliver.js";
 import type { OutboundMirror } from "./mirror.js";
@@ -75,6 +78,9 @@ type MessageSendParams = {
   threadId?: string | number;
   dryRun?: boolean;
   bestEffort?: boolean;
+  queuePolicy?: OutboundDeliveryQueuePolicy;
+  payloads?: ReplyPayload[];
+  mediaAccess?: OutboundMediaAccess;
   deps?: OutboundSendDeps;
   cfg?: OpenClawConfig;
   gateway?: MessageGatewayOptions;
@@ -238,14 +244,18 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
   const channel = await resolveRequiredChannel({ cfg, channel: params.channel });
   const plugin = resolveRequiredPlugin(channel, cfg);
   const deliveryMode = plugin.outbound?.deliveryMode ?? "direct";
-  const outboundPlan = createOutboundPayloadPlan([
-    {
-      text: params.content,
-      mediaUrl: params.mediaUrl,
-      mediaUrls: params.mediaUrls,
-      audioAsVoice: params.asVoice === true,
-    },
-  ]);
+  const outboundPayloads =
+    params.payloads && params.payloads.length > 0
+      ? params.payloads
+      : [
+          {
+            text: params.content,
+            mediaUrl: params.mediaUrl,
+            mediaUrls: params.mediaUrls,
+            audioAsVoice: params.asVoice === true,
+          },
+        ];
+  const outboundPlan = createOutboundPayloadPlan(outboundPayloads);
   const normalizedPayloads = projectOutboundPayloadPlanForDelivery(outboundPlan);
   const mirrorProjection = projectOutboundPayloadPlanForMirror(outboundPlan);
   const mirrorText = mirrorProjection.text;
@@ -299,8 +309,10 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       forceDocument: params.forceDocument,
       deps: params.deps,
       bestEffort: params.bestEffort,
+      queuePolicy: params.queuePolicy,
       abortSignal: params.abortSignal,
       silent: params.silent,
+      mediaAccess: params.mediaAccess,
       mirror: params.mirror
         ? {
             ...params.mirror,

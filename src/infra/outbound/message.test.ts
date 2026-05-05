@@ -227,6 +227,36 @@ describe("sendMessage", () => {
     );
   });
 
+  it("forwards prepared payloads and required queue policy into outbound delivery", async () => {
+    const mediaAccess = {
+      localRoots: ["/tmp/media"],
+      readFile: vi.fn(async () => Buffer.from("media")),
+    };
+
+    await sendMessage({
+      cfg: {},
+      channel: "forum",
+      to: "123456",
+      content: "fallback text",
+      payloads: [{ text: "prepared", channelData: { forum: { card: true } } }],
+      queuePolicy: "required",
+      mediaAccess,
+    });
+
+    expect(mocks.deliverOutboundPayloads).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payloads: [
+          expect.objectContaining({
+            text: "prepared",
+            channelData: { forum: { card: true } },
+          }),
+        ],
+        queuePolicy: "required",
+        mediaAccess,
+      }),
+    );
+  });
+
   it("applies mirror matrix semantics for MEDIA and silent token variants", async () => {
     const matrix: Array<{
       name: string;
