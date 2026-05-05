@@ -67,7 +67,7 @@ describe("recordInboundSessionAndDispatchReply", () => {
       Surface: "test",
     } as FinalizedMsgContext;
 
-    await recordInboundSessionAndDispatchReply({
+    await recordChannelMessageReplyDispatch({
       cfg: {} as OpenClawConfig,
       channel: "test",
       accountId: "default",
@@ -173,7 +173,7 @@ describe("recordInboundSessionAndDispatchReply", () => {
       Surface: "telegram",
     } as FinalizedMsgContext;
 
-    await dispatchInboundReplyWithBase({
+    await dispatchChannelMessageReplyWithBase({
       cfg: {} as OpenClawConfig,
       channel: "telegram",
       accountId: "default",
@@ -235,14 +235,16 @@ describe("recordInboundSessionAndDispatchReply", () => {
     });
   });
 
-  it("exposes channel-message receive dispatch aliases for new channel code", () => {
+  it("exposes channel-message dispatch names as the canonical helpers for new channel code", () => {
     expect(createChannelMessageReplyPipeline).toBe(createChannelReplyPipeline);
     expect(resolveChannelMessageSourceReplyDeliveryMode).toBe(
       resolveChannelSourceReplyDeliveryMode,
     );
     expect(createChannelMessageReplyPrefixContext).toBe(createReplyPrefixContext);
-    expect(dispatchChannelMessageReplyWithBase).toBe(dispatchInboundReplyWithBase);
+    expect(typeof dispatchChannelMessageReplyWithBase).toBe("function");
+    expect(typeof dispatchInboundReplyWithBase).toBe("function");
     expect(hasFinalChannelMessageReplyDispatch).toBe(hasFinalInboundReplyDispatch);
-    expect(recordChannelMessageReplyDispatch).toBe(recordInboundSessionAndDispatchReply);
+    expect(typeof recordChannelMessageReplyDispatch).toBe("function");
+    expect(typeof recordInboundSessionAndDispatchReply).toBe("function");
   });
 });

@@ -265,9 +265,10 @@ Implemented in the current refactor branch:
   receipts/keys; parallel owner-local `messageIds` fields were removed from
   the WhatsApp send result shapes.
 - Live-capable bundled adapters have capability proof tests; receive ack policy
-  declarations now have proof helpers and Telegram plus LINE coverage. Telegram
-  uses receive context for polling-offset persistence after dispatch; LINE uses
-  receive context to delay webhook acknowledgement until event dispatch succeeds.
+  declarations now have proof helpers. All message adapters have an explicit
+  receive policy: Telegram and LINE declare staged acknowledgement policies,
+  while adapters whose platform acknowledgement remains plugin/protocol-owned
+  default to `manual`.
 - Generic live preview finalizers can retain ambiguous failed final edits
   without sending a duplicate fallback, which is the required seam for Telegram
   stale/ambiguous preview parity.
@@ -283,7 +284,9 @@ Implemented in the current refactor branch:
   `createChannelTurnReplyPipeline` name remains exported only as an explicitly
   deprecated public compatibility surface.
 - Legacy reply/turn SDK names carry deprecation guidance and docs steer new
-  channel code to the message adapter plus receive/send lifecycle helpers.
+  channel code to the message adapter plus receive/send lifecycle helpers. The
+  old inbound reply dispatch names remain importable but now delegate to the
+  channel-message implementations.
 
 Receive policy audit:
 
@@ -295,15 +298,14 @@ Receive policy audit:
   verification/no-event requests can acknowledge after receive-record parsing.
 - BlueBubbles, Google Chat, Nextcloud Talk, Synology Chat, Zalo, Slack, Discord,
   Mattermost, Microsoft Teams, QQ Bot, IRC, Signal, iMessage, Tlon, Twitch,
-  WhatsApp, Feishu, Matrix, and Zalo Personal intentionally do not declare
-  `message.receive` in this slice. Their current inbound paths either have no
-  platform acknowledgement to defer, acknowledge HTTP/webhook/socket delivery
-  before asynchronous processing, or require a protocol interaction response
-  that is not equivalent to durable receive acknowledgement.
+  WhatsApp, Feishu, Matrix, and Zalo Personal use the default `manual` receive
+  policy. Their current inbound paths either have no platform acknowledgement to
+  defer, acknowledge HTTP/webhook/socket delivery before asynchronous
+  processing, or require a protocol interaction response that is not equivalent
+  to durable receive acknowledgement.
 
 Compatibility status:
 
-- Old public reply/turn entry points stay as deprecated compatibility surfaces
+- Old public reply/turn entry points stay as deprecated compatibility wrappers
   for tracked third-party callers and direct-DM helpers. The refactor is
-  complete for bundled and gateway runtime paths once those paths use
-  `plugin-sdk/channel-message` names and the broad gates pass.
+  complete for bundled and gateway runtime paths once the broad gates pass.

@@ -125,6 +125,19 @@ describe("createChannelMessageAdapterFromOutbound", () => {
     expect(adapter.send?.payload).toBeUndefined();
   });
 
+  it("defaults outbound-derived adapters to plugin-owned receive acknowledgements", () => {
+    const adapter = createChannelMessageAdapterFromOutbound({
+      outbound: {
+        sendText: vi.fn(async () => ({ messageId: "msg-1" })),
+      },
+    });
+
+    expect(adapter.receive).toEqual({
+      defaultAckPolicy: "manual",
+      supportedAckPolicies: ["manual"],
+    });
+  });
+
   it("preserves declared live and receive lifecycle metadata", () => {
     const adapter = createChannelMessageAdapterFromOutbound({
       outbound: {},

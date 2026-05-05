@@ -119,45 +119,7 @@ export function buildInboundReplyDispatchBase(params: {
 }
 
 type BuildInboundReplyDispatchBaseParams = Parameters<typeof buildInboundReplyDispatchBase>[0];
-type RecordInboundSessionAndDispatchReplyParams = Parameters<
-  typeof recordInboundSessionAndDispatchReply
->[0];
-
-/**
- * Resolve the shared dispatch base and immediately record + dispatch one inbound reply turn.
- *
- * @deprecated Legacy inbound reply helper. New channel plugins should expose a
- * `message` adapter via `defineChannelMessageAdapter(...)` and use
- * `dispatchChannelMessageReplyWithBase` only for compatibility dispatchers that
- * have not moved to the message lifecycle yet.
- */
-export async function dispatchInboundReplyWithBase(
-  params: BuildInboundReplyDispatchBaseParams &
-    Pick<
-      RecordInboundSessionAndDispatchReplyParams,
-      "deliver" | "durable" | "onRecordError" | "onDispatchError" | "replyOptions"
-    >,
-): Promise<void> {
-  const dispatchBase = buildInboundReplyDispatchBase(params);
-  await recordInboundSessionAndDispatchReply({
-    ...dispatchBase,
-    deliver: params.deliver,
-    durable: params.durable,
-    onRecordError: params.onRecordError,
-    onDispatchError: params.onDispatchError,
-    replyOptions: params.replyOptions,
-  });
-}
-
-/**
- * Record the inbound session first, then dispatch the reply using normalized outbound delivery.
- *
- * @deprecated Legacy inbound reply helper. New channel plugins should expose a
- * `message` adapter via `defineChannelMessageAdapter(...)` and use
- * `recordChannelMessageReplyDispatch` only for compatibility dispatchers that
- * have not moved to the message lifecycle yet.
- */
-export async function recordInboundSessionAndDispatchReply(params: {
+type RecordChannelMessageReplyDispatchParams = {
   cfg: OpenClawConfig;
   channel: string;
   accountId?: string;
@@ -172,7 +134,47 @@ export async function recordInboundSessionAndDispatchReply(params: {
   onRecordError: (err: unknown) => void;
   onDispatchError: (err: unknown, info: { kind: string }) => void;
   replyOptions?: ReplyOptionsWithoutModelSelected;
-}): Promise<void> {
+};
+
+/**
+ * Resolve the shared dispatch base and immediately record + dispatch one inbound reply turn.
+ */
+export async function dispatchChannelMessageReplyWithBase(
+  params: BuildInboundReplyDispatchBaseParams &
+    Pick<
+      RecordChannelMessageReplyDispatchParams,
+      "deliver" | "durable" | "onRecordError" | "onDispatchError" | "replyOptions"
+    >,
+): Promise<void> {
+  const dispatchBase = buildInboundReplyDispatchBase(params);
+  await recordChannelMessageReplyDispatch({
+    ...dispatchBase,
+    deliver: params.deliver,
+    durable: params.durable,
+    onRecordError: params.onRecordError,
+    onDispatchError: params.onDispatchError,
+    replyOptions: params.replyOptions,
+  });
+}
+
+/**
+ * Resolve the shared dispatch base and immediately record + dispatch one inbound reply turn.
+ *
+ * @deprecated Legacy inbound reply helper. New channel plugins should expose a
+ * `message` adapter via `defineChannelMessageAdapter(...)` and use
+ * `dispatchChannelMessageReplyWithBase` only for compatibility dispatchers that
+ * have not moved to the message lifecycle yet.
+ */
+export async function dispatchInboundReplyWithBase(
+  params: Parameters<typeof dispatchChannelMessageReplyWithBase>[0],
+): Promise<void> {
+  await dispatchChannelMessageReplyWithBase(params);
+}
+
+/** Record the inbound session first, then dispatch the reply using normalized outbound delivery. */
+export async function recordChannelMessageReplyDispatch(
+  params: RecordChannelMessageReplyDispatchParams,
+): Promise<void> {
   const { onModelSelected, ...replyPipeline } = createChannelReplyPipeline({
     cfg: params.cfg,
     agentId: params.agentId,
@@ -230,9 +232,21 @@ export async function recordInboundSessionAndDispatchReply(params: {
   });
 }
 
+/**
+ * Record the inbound session first, then dispatch the reply using normalized outbound delivery.
+ *
+ * @deprecated Legacy inbound reply helper. New channel plugins should expose a
+ * `message` adapter via `defineChannelMessageAdapter(...)` and use
+ * `recordChannelMessageReplyDispatch` only for compatibility dispatchers that
+ * have not moved to the message lifecycle yet.
+ */
+export async function recordInboundSessionAndDispatchReply(
+  params: RecordChannelMessageReplyDispatchParams,
+): Promise<void> {
+  await recordChannelMessageReplyDispatch(params);
+}
+
 export const buildChannelMessageReplyDispatchBase = buildInboundReplyDispatchBase;
-export const dispatchChannelMessageReplyWithBase = dispatchInboundReplyWithBase;
 export const hasFinalChannelMessageReplyDispatch = hasFinalChannelTurnDispatch;
 export const hasVisibleChannelMessageReplyDispatch = hasVisibleChannelTurnDispatch;
-export const recordChannelMessageReplyDispatch = recordInboundSessionAndDispatchReply;
 export const resolveChannelMessageReplyDispatchCounts = resolveChannelTurnDispatchCounts;

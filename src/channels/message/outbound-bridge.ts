@@ -13,6 +13,11 @@ import type {
   MessageReceiptSourceResult,
 } from "./types.js";
 
+const defaultManualReceiveAdapter = {
+  defaultAckPolicy: "manual",
+  supportedAckPolicies: ["manual"],
+} as const satisfies ChannelMessageReceiveAdapterShape;
+
 export type ChannelMessageOutboundBridgeResult = MessageReceiptSourceResult & {
   receipt?: MessageReceipt;
   messageId?: string;
@@ -138,6 +143,6 @@ export function createChannelMessageAdapterFromOutbound<TConfig = unknown>(
     },
     send,
     ...(params.live ? { live: params.live } : {}),
-    ...(params.receive ? { receive: params.receive } : {}),
+    receive: params.receive ?? defaultManualReceiveAdapter,
   };
 }

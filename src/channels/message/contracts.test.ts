@@ -254,6 +254,29 @@ describe("durable final capability contracts", () => {
     ).toEqual(["after_durable_send"]);
   });
 
+  it("treats manual receive acknowledgement as an explicit plugin-owned policy", async () => {
+    const manual = vi.fn();
+
+    expect(
+      listDeclaredReceiveAckPolicies({
+        defaultAckPolicy: "manual",
+        supportedAckPolicies: ["manual"],
+      }),
+    ).toEqual(["manual"]);
+
+    await expect(
+      verifyChannelMessageReceiveAckPolicyProofs({
+        adapterName: "demo",
+        receive: {
+          defaultAckPolicy: "manual",
+          supportedAckPolicies: ["manual"],
+        },
+        proofs: { manual },
+      }),
+    ).resolves.toEqual(expect.arrayContaining([{ policy: "manual", status: "verified" }]));
+    expect(manual).toHaveBeenCalledTimes(1);
+  });
+
   it("fails when a declared receive ack policy has no proof", async () => {
     await expect(
       verifyChannelMessageReceiveAckPolicyProofs({

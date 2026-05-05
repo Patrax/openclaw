@@ -104,6 +104,10 @@ The bridge converts old outbound send results into `MessageReceipt` values. New
 code should pass receipts end to end and only derive legacy ids at compatibility
 edges with `listMessageReceiptPlatformIds(...)` or
 `resolveMessageReceiptPrimaryId(...)`.
+If no receive policy is supplied, `createChannelMessageAdapterFromOutbound(...)`
+uses `manual` receive acknowledgement policy. That makes plugin-owned platform
+acknowledgement explicit without changing channels that acknowledge webhooks,
+sockets, or polling offsets outside generic receive context.
 
 ## Durable Final Capabilities
 
@@ -237,6 +241,22 @@ const demoMessageAdapter = defineChannelMessageAdapter({
   },
 });
 ```
+
+Adapters that do not declare receive policy default to:
+
+```typescript
+{
+  receive: {
+    defaultAckPolicy: "manual",
+    supportedAckPolicies: ["manual"],
+  },
+}
+```
+
+Use the default when the platform has no acknowledgement to defer, already
+acknowledges before asynchronous processing, or needs protocol-specific response
+semantics. Declare one of the staged policies only when the receiver actually
+uses receive context to move platform acknowledgement later.
 
 Policies:
 

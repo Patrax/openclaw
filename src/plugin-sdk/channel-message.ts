@@ -2,6 +2,7 @@ import type {
   ChannelMessageAdapter,
   ChannelMessageAdapterShape,
 } from "../channels/message/index.js";
+import type { ChannelMessageReceiveAdapterShape } from "../channels/message/index.js";
 export {
   createChannelTurnReplyPipeline,
   deliverInboundReplyWithMessageSendContext,
@@ -124,8 +125,23 @@ export type {
   RenderedMessageBatchPlanKind,
 } from "../channels/message/index.js";
 
+const defaultManualReceiveAdapter = {
+  defaultAckPolicy: "manual",
+  supportedAckPolicies: ["manual"],
+} as const satisfies ChannelMessageReceiveAdapterShape;
+
+type ChannelMessageAdapterWithDefaultReceive<TAdapter extends ChannelMessageAdapterShape> =
+  TAdapter & {
+    receive: TAdapter["receive"] extends undefined
+      ? typeof defaultManualReceiveAdapter
+      : NonNullable<TAdapter["receive"]>;
+  };
+
 export function defineChannelMessageAdapter<const TAdapter extends ChannelMessageAdapterShape>(
   adapter: TAdapter,
-): ChannelMessageAdapter<TAdapter> {
-  return adapter;
+): ChannelMessageAdapter<ChannelMessageAdapterWithDefaultReceive<TAdapter>> {
+  return {
+    ...adapter,
+    receive: adapter.receive ?? defaultManualReceiveAdapter,
+  } as ChannelMessageAdapter<ChannelMessageAdapterWithDefaultReceive<TAdapter>>;
 }
