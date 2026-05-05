@@ -41,6 +41,7 @@ const queueMocks = vi.hoisted(() => ({
   enqueueDelivery: vi.fn(async () => "mock-queue-id"),
   ackDelivery: vi.fn(async () => {}),
   failDelivery: vi.fn(async () => {}),
+  markDeliveryPlatformSendStarted: vi.fn(async () => {}),
   withActiveDeliveryClaim: vi.fn<
     (
       entryId: string,
@@ -81,6 +82,7 @@ vi.mock("./delivery-queue.js", () => ({
   enqueueDelivery: queueMocks.enqueueDelivery,
   ackDelivery: queueMocks.ackDelivery,
   failDelivery: queueMocks.failDelivery,
+  markDeliveryPlatformSendStarted: queueMocks.markDeliveryPlatformSendStarted,
   withActiveDeliveryClaim: queueMocks.withActiveDeliveryClaim,
 }));
 vi.mock("../../logging/subsystem.js", () => ({
@@ -218,12 +220,12 @@ function flushDiagnosticEvents() {
   return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-async function runBestEffortPartialFailureDelivery() {
+async function runBestEffortPartialFailureDelivery(params?: { onError?: boolean }) {
   const sendMatrix = vi
     .fn()
     .mockRejectedValueOnce(new Error("fail"))
     .mockResolvedValueOnce({ messageId: "m2", roomId: "!room:example" });
-  const onError = vi.fn();
+  const onError = params?.onError === false ? undefined : vi.fn();
   const cfg: OpenClawConfig = {};
   const results = await deliverOutboundPayloads({
     cfg,
@@ -232,7 +234,7 @@ async function runBestEffortPartialFailureDelivery() {
     payloads: [{ text: "a" }, { text: "b" }],
     deps: { matrix: sendMatrix },
     bestEffort: true,
-    onError,
+    ...(onError ? { onError } : {}),
   });
   return { sendMatrix, onError, results };
 }
@@ -279,6 +281,8 @@ describe("deliverOutboundPayloads", () => {
     queueMocks.ackDelivery.mockResolvedValue(undefined);
     queueMocks.failDelivery.mockClear();
     queueMocks.failDelivery.mockResolvedValue(undefined);
+    queueMocks.markDeliveryPlatformSendStarted.mockClear();
+    queueMocks.markDeliveryPlatformSendStarted.mockResolvedValue(undefined);
     queueMocks.withActiveDeliveryClaim.mockClear();
     queueMocks.withActiveDeliveryClaim.mockImplementation(async (_entryId, fn) => ({
       status: "claimed",
@@ -1548,6 +1552,44 @@ describe("deliverOutboundPayloads", () => {
     expect(queueMocks.failDelivery).toHaveBeenCalledWith(
       "mock-queue-id",
       "partial delivery failure (bestEffort)",
+    );
+  });
+
+  it("tracks bestEffort partial failure even without an onError callback", async () => {
+    const { sendMatrix, results } = await runBestEffortPartialFailureDelivery({ onError: false });
+
+    expect(sendMatrix).toHaveBeenCalledTimes(2);
+    expect(results).toEqual([{ channel: "matrix", messageId: "m2", roomId: "!room:example" }]);
+    expect(queueMocks.ackDelivery).not.toHaveBeenCalled();
+    expect(queueMocks.failDelivery).toHaveBeenCalledWith(
+      "mock-queue-id",
+      "partial delivery failure (bestEffort)",
+    );
+  });
+
+  it("fails closed before platform I/O when the send-start marker cannot be persisted", async () => {
+    queueMocks.markDeliveryPlatformSendStarted.mockRejectedValueOnce(new Error("disk full"));
+    const sendMatrix = vi.fn().mockResolvedValue({ messageId: "m1", roomId: "!room:example" });
+
+    await expect(
+      deliverOutboundPayloads({
+        cfg: {},
+        channel: "matrix",
+        to: "!room:example",
+        payloads: [{ text: "hi" }],
+        deps: { matrix: sendMatrix },
+      }),
+    ).rejects.toThrow("Failed to mark delivery mock-queue-id as platform-send-started");
+
+    expect(queueMocks.markDeliveryPlatformSendStarted).toHaveBeenCalledWith(
+      "mock-queue-id",
+      undefined,
+    );
+    expect(sendMatrix).not.toHaveBeenCalled();
+    expect(queueMocks.ackDelivery).not.toHaveBeenCalled();
+    expect(queueMocks.failDelivery).toHaveBeenCalledWith(
+      "mock-queue-id",
+      "Failed to mark delivery mock-queue-id as platform-send-started | disk full",
     );
   });
 

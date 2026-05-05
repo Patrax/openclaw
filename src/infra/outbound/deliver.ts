@@ -37,6 +37,7 @@ import {
   ackDelivery,
   enqueueDelivery,
   failDelivery,
+  markDeliveryPlatformSendStarted,
   withActiveDeliveryClaim,
 } from "./delivery-queue.js";
 import type { OutboundDeliveryFormattingOptions } from "./formatting.js";
@@ -350,6 +351,13 @@ function createChannelOutboundContextBase(
 
 const isAbortError = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
 
+class DeliveryQueueMarkError extends Error {
+  constructor(queueId: string, cause: unknown) {
+    super(`Failed to mark delivery ${queueId} as platform-send-started`, { cause });
+    this.name = "DeliveryQueueMarkError";
+  }
+}
+
 type DeliverOutboundPayloadsCoreParams = {
   cfg: OpenClawConfig;
   channel: Exclude<OutboundChannel, "none">;
@@ -374,6 +382,10 @@ type DeliverOutboundPayloadsCoreParams = {
   mirror?: DeliveryMirror;
   silent?: boolean;
   gatewayClientScopes?: readonly string[];
+  /** Internal queue entry to mark before platform I/O. */
+  deliveryQueueId?: string;
+  /** Internal state dir for deliveryQueueId. */
+  deliveryQueueStateDir?: string;
 };
 
 function collectPayloadMediaSources(plan: readonly OutboundPayloadPlan[]): string[] {
@@ -853,13 +865,13 @@ export async function deliverOutboundPayloads(
       }).catch(() => null); // Best-effort — don't block delivery if queue write fails.
 
   if (!queueId) {
-    return await deliverOutboundPayloadsWithQueueCleanup(params, null);
+    return await deliverOutboundPayloadsWithQueueCleanup(params, null, params.deliveryQueueId);
   }
 
   // Hold the same in-process claim used by recovery/drain while the live send
   // owns this queue entry.
   const claimResult = await withActiveDeliveryClaim(queueId, () =>
-    deliverOutboundPayloadsWithQueueCleanup(params, queueId),
+    deliverOutboundPayloadsWithQueueCleanup(params, queueId, queueId),
   );
   if (claimResult.status === "claimed-by-other-owner") {
     return [];
@@ -870,21 +882,21 @@ export async function deliverOutboundPayloads(
 async function deliverOutboundPayloadsWithQueueCleanup(
   params: DeliverOutboundPayloadsParams,
   queueId: string | null,
+  deliveryQueueId: string | null | undefined,
 ): Promise<OutboundDeliveryResult[]> {
   // Wrap onError to detect partial failures under bestEffort mode.
   // When bestEffort is true, per-payload errors are caught and passed to onError
   // without throwing — so the outer try/catch never fires. We track whether any
   // payload failed so we can call failDelivery instead of ackDelivery.
   let hadPartialFailure = false;
-  const wrappedParams = params.onError
-    ? {
-        ...params,
-        onError: (err: unknown, payload: NormalizedOutboundPayload) => {
-          hadPartialFailure = true;
-          params.onError!(err, payload);
-        },
-      }
-    : params;
+  const wrappedParams = {
+    ...params,
+    ...(deliveryQueueId ? { deliveryQueueId } : {}),
+    onError: (err: unknown, payload: NormalizedOutboundPayload) => {
+      hadPartialFailure = true;
+      params.onError?.(err, payload);
+    },
+  };
 
   try {
     const results = await deliverOutboundPayloadsCore(wrappedParams);
@@ -976,6 +988,18 @@ async function deliverOutboundPayloadsCore(
     replyToId: params.replyToId,
     replyToMode: params.replyToMode,
   });
+  let platformSendStarted = false;
+  const markPlatformSendStarted = async () => {
+    if (!params.deliveryQueueId || platformSendStarted) {
+      return;
+    }
+    try {
+      await markDeliveryPlatformSendStarted(params.deliveryQueueId, params.deliveryQueueStateDir);
+    } catch (err) {
+      throw new DeliveryQueueMarkError(params.deliveryQueueId, err);
+    }
+    platformSendStarted = true;
+  };
 
   const sendTextChunks = async (text: string, overrides: OutboundMessageSendOverrides = {}) => {
     const units = planOutboundTextMessageUnits({
@@ -996,6 +1020,7 @@ async function deliverOutboundPayloadsCore(
         continue;
       }
       throwIfAborted(abortSignal);
+      await markPlatformSendStarted();
       results.push(await handler.sendText(unit.text, unit.overrides));
     }
   };
@@ -1129,6 +1154,7 @@ async function deliverOutboundPayloadsCore(
           }) ||
           effectivePayload.audioAsVoice === true)
       ) {
+        await markPlatformSendStarted();
         const delivery = await handler.sendPayload(
           effectivePayload,
           applySendReplyToConsumption(sendOverrides),
@@ -1161,6 +1187,7 @@ async function deliverOutboundPayloadsCore(
       if (payloadSummary.mediaUrls.length === 0) {
         const beforeCount = results.length;
         if (handler.sendFormattedText) {
+          await markPlatformSendStarted();
           results.push(
             ...(await handler.sendFormattedText(
               payloadSummary.text,
@@ -1249,6 +1276,7 @@ async function deliverOutboundPayloadsCore(
           continue;
         }
         throwIfAborted(abortSignal);
+        await markPlatformSendStarted();
         const delivery = handler.sendFormattedMedia
           ? await handler.sendFormattedMedia(unit.caption ?? "", unit.mediaUrl, unit.overrides)
           : await handler.sendMedia(unit.caption ?? "", unit.mediaUrl, unit.overrides);
@@ -1281,6 +1309,9 @@ async function deliverOutboundPayloadsCore(
         content: payloadSummary.hookContent ?? payloadSummary.text,
         error: formatErrorMessage(err),
       });
+      if (err instanceof DeliveryQueueMarkError) {
+        throw err;
+      }
       if (!params.bestEffort) {
         throw err;
       }

@@ -12,6 +12,7 @@ import type { OutboundChannel } from "./targets.js";
 
 const QUEUE_DIRNAME = "delivery-queue";
 const FAILED_DIRNAME = "failed";
+export const UNKNOWN_AFTER_SEND_ERROR = "unknown_after_send";
 
 export type QueuedDeliveryPayload = {
   channel: Exclude<OutboundChannel, "none">;
@@ -87,7 +88,7 @@ async function writeQueueEntry(filePath: string, entry: QueuedDelivery): Promise
   await replaceFileAtomic({
     filePath,
     content: JSON.stringify(entry, null, 2),
-    fileMode: 0o600,
+    mode: 0o600,
     tempPrefix: ".delivery-queue",
   });
 }
@@ -196,6 +197,22 @@ export async function failDelivery(id: string, error: string, stateDir?: string)
   entry.retryCount += 1;
   entry.lastAttemptAt = Date.now();
   entry.lastError = error;
+  await writeQueueEntry(filePath, entry);
+}
+
+/** Mark that platform I/O is about to start for this queue entry.
+ *
+ * If the process crashes after this point, the send outcome is unknown and
+ * recovery must not blindly replay the entry.
+ */
+export async function markDeliveryPlatformSendStarted(
+  id: string,
+  stateDir?: string,
+): Promise<void> {
+  const filePath = path.join(resolveQueueDir(stateDir), `${id}.json`);
+  const entry = await readQueueEntry(filePath);
+  entry.lastAttemptAt = Date.now();
+  entry.lastError = UNKNOWN_AFTER_SEND_ERROR;
   await writeQueueEntry(filePath, entry);
 }
 

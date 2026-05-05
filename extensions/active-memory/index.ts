@@ -23,10 +23,7 @@ import {
   resolveSessionStoreEntry,
   updateSessionStore,
 } from "openclaw/plugin-sdk/session-store-runtime";
-import {
-  createPrivateTempWorkspace,
-  resolvePreferredOpenClawTmpDir,
-} from "openclaw/plugin-sdk/temp-path";
+import { tempWorkspace, resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/temp-path";
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_AGENT_ID = "main";
@@ -2378,13 +2375,13 @@ async function runRecallSubagent(params: {
   const subagentSessionKey = parentSessionKey
     ? `${parentSessionKey}:${subagentSuffix}`
     : `agent:${params.agentId}:${subagentSuffix}`;
-  const tempWorkspace = params.config.persistTranscripts
+  const transientWorkspace = params.config.persistTranscripts
     ? undefined
-    : await createPrivateTempWorkspace({
+    : await tempWorkspace({
         rootDir: resolvePreferredOpenClawTmpDir(),
         prefix: "openclaw-active-memory-",
       });
-  const tempDir = tempWorkspace?.dir;
+  const tempDir = transientWorkspace?.dir;
   const persistedDir = params.config.persistTranscripts
     ? resolveSafeTranscriptDir(
         resolvePersistentTranscriptBaseDir(params.api, params.agentId),
@@ -2483,7 +2480,7 @@ async function runRecallSubagent(params: {
     }
     throw error;
   } finally {
-    await tempWorkspace?.cleanup();
+    await transientWorkspace?.cleanup();
   }
 }
 

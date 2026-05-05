@@ -8,6 +8,7 @@ import {
   moveToFailed,
   type QueuedDelivery,
   type QueuedDeliveryPayload,
+  UNKNOWN_AFTER_SEND_ERROR,
 } from "./delivery-queue-storage.js";
 
 export type RecoverySummary = {
@@ -21,6 +22,10 @@ export type DeliverFn = (
   params: {
     cfg: OpenClawConfig;
   } & QueuedDeliveryPayload & {
+      /** Internal queue entry to mark before platform I/O during replay. */
+      deliveryQueueId?: string;
+      /** Internal state dir for the replayed queue entry. */
+      deliveryQueueStateDir?: string;
       skipQueue?: boolean;
     },
 ) => Promise<unknown>;
@@ -109,7 +114,7 @@ export async function withActiveDeliveryClaim<T>(
   }
 }
 
-function buildRecoveryDeliverParams(entry: QueuedDelivery, cfg: OpenClawConfig) {
+function buildRecoveryDeliverParams(entry: QueuedDelivery, cfg: OpenClawConfig, stateDir?: string) {
   return {
     cfg,
     channel: entry.channel,
@@ -127,6 +132,8 @@ function buildRecoveryDeliverParams(entry: QueuedDelivery, cfg: OpenClawConfig) 
     mirror: entry.mirror,
     session: entry.session,
     gatewayClientScopes: entry.gatewayClientScopes,
+    deliveryQueueId: entry.id,
+    deliveryQueueStateDir: stateDir,
     skipQueue: true, // Prevent re-enqueueing during recovery.
   } satisfies Parameters<DeliverFn>[0];
 }
@@ -150,7 +157,11 @@ async function deferRemainingEntriesForBudget(
   // Increment retryCount so entries that are repeatedly deferred by the
   // recovery budget eventually hit MAX_RETRIES and get pruned.
   await Promise.allSettled(
-    entries.map((entry) => failDelivery(entry.id, "recovery time budget exceeded", stateDir)),
+    entries.map((entry) =>
+      hasUnknownPlatformSendOutcome(entry)
+        ? moveToFailed(entry.id, stateDir)
+        : failDelivery(entry.id, "recovery time budget exceeded", stateDir),
+    ),
   );
 }
 
@@ -192,6 +203,10 @@ export function isPermanentDeliveryError(error: string): boolean {
   return PERMANENT_ERROR_PATTERNS.some((re) => re.test(error));
 }
 
+function hasUnknownPlatformSendOutcome(entry: QueuedDelivery): boolean {
+  return entry.lastError === UNKNOWN_AFTER_SEND_ERROR;
+}
+
 async function drainQueuedEntry(opts: {
   entry: QueuedDelivery;
   cfg: OpenClawConfig;
@@ -202,7 +217,7 @@ async function drainQueuedEntry(opts: {
 }): Promise<"recovered" | "failed" | "moved-to-failed" | "already-gone"> {
   const { entry } = opts;
   try {
-    await opts.deliver(buildRecoveryDeliverParams(entry, opts.cfg));
+    await opts.deliver(buildRecoveryDeliverParams(entry, opts.cfg, opts.stateDir));
     await ackDelivery(entry.id, opts.stateDir);
     opts.onRecovered?.(entry);
     return "recovered";
@@ -281,6 +296,14 @@ export async function drainPendingDeliveries(opts: {
         const currentDecision = opts.selectEntry(currentEntry, Date.now());
         if (!currentDecision.match) {
           opts.log.info(`${opts.logLabel}: entry ${currentEntry.id} no longer matches, skipping`);
+          continue;
+        }
+
+        if (hasUnknownPlatformSendOutcome(currentEntry)) {
+          await moveEntryToFailedWithLogging(currentEntry.id, opts.log, opts.stateDir);
+          opts.log.warn(
+            `${opts.logLabel}: entry ${currentEntry.id} has unknown platform send outcome and was moved to failed/`,
+          );
           continue;
         }
 
@@ -380,6 +403,15 @@ export async function recoverPendingDeliveries(opts: {
       const currentEntry = await loadPendingDelivery(entry.id, opts.stateDir);
       if (!currentEntry) {
         opts.log.info(`Recovery skipped for delivery ${entry.id}: already gone`);
+        continue;
+      }
+
+      if (hasUnknownPlatformSendOutcome(currentEntry)) {
+        opts.log.warn(
+          `Delivery ${currentEntry.id} has unknown platform send outcome and was moved to failed/`,
+        );
+        await moveEntryToFailedWithLogging(currentEntry.id, opts.log, opts.stateDir);
+        summary.failed += 1;
         continue;
       }
 

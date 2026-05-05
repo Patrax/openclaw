@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   enqueueDelivery,
   loadPendingDeliveries,
+  markDeliveryPlatformSendStarted,
   MAX_RETRIES,
   recoverPendingDeliveries,
 } from "./delivery-queue.js";
@@ -139,7 +140,7 @@ describe("delivery-queue recovery", () => {
   });
 
   it("passes skipQueue: true to prevent re-enqueueing during recovery", async () => {
-    await enqueueDelivery(
+    const id = await enqueueDelivery(
       { channel: "demo-channel-a", to: "+1", payloads: [{ text: "a" }] },
       tmpDir(),
     );
@@ -147,7 +148,35 @@ describe("delivery-queue recovery", () => {
     const deliver = vi.fn().mockResolvedValue([]);
     await runRecovery({ deliver });
 
-    expect(deliver).toHaveBeenCalledWith(expect.objectContaining({ skipQueue: true }));
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryQueueId: id,
+        deliveryQueueStateDir: tmpDir(),
+        skipQueue: true,
+      }),
+    );
+  });
+
+  it("moves unknown-after-send entries to failed without replaying", async () => {
+    const id = await enqueueDelivery(
+      { channel: "demo-channel-a", to: "+1", payloads: [{ text: "a" }] },
+      tmpDir(),
+    );
+    await markDeliveryPlatformSendStarted(id, tmpDir());
+
+    const deliver = vi.fn().mockResolvedValue([]);
+    const { result, log } = await runRecovery({ deliver });
+
+    expect(deliver).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      recovered: 0,
+      failed: 1,
+      skippedMaxRetries: 0,
+      deferredBackoff: 0,
+    });
+    expect(await loadPendingDeliveries(tmpDir())).toHaveLength(0);
+    expect(fs.existsSync(path.join(tmpDir(), "delivery-queue", "failed", `${id}.json`))).toBe(true);
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("unknown platform send outcome"));
   });
 
   it("replays stored delivery options during recovery", async () => {

@@ -6,7 +6,9 @@ import {
   enqueueDelivery,
   failDelivery,
   loadPendingDeliveries,
+  markDeliveryPlatformSendStarted,
   moveToFailed,
+  UNKNOWN_AFTER_SEND_ERROR,
 } from "./delivery-queue.js";
 import { installDeliveryQueueTmpDirHooks, readQueuedEntry } from "./delivery-queue.test-helpers.js";
 
@@ -132,6 +134,27 @@ describe("delivery-queue storage", () => {
       expect(typeof entry.lastAttemptAt).toBe("number");
       expect((entry.lastAttemptAt as number) > 0).toBe(true);
       expect(entry.lastError).toBe("connection refused");
+    });
+  });
+
+  describe("markDeliveryPlatformSendStarted", () => {
+    it("records an unknown platform-send outcome without consuming a retry", async () => {
+      const id = await enqueueTextDelivery(
+        {
+          channel: "forum",
+          to: "123",
+          payloads: [{ text: "test" }],
+        },
+        tmpDir(),
+      );
+
+      await markDeliveryPlatformSendStarted(id, tmpDir());
+
+      const entry = readQueuedEntry(tmpDir(), id);
+      expect(entry.retryCount).toBe(0);
+      expect(typeof entry.lastAttemptAt).toBe("number");
+      expect((entry.lastAttemptAt as number) > 0).toBe(true);
+      expect(entry.lastError).toBe(UNKNOWN_AFTER_SEND_ERROR);
     });
   });
 
