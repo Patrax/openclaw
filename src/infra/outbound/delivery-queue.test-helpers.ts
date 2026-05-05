@@ -45,7 +45,7 @@ export function setQueuedEntryState(
     lastAttemptAt?: number;
     enqueuedAt?: number;
     platformSendStartedAt?: number;
-    recoveryState?: "unknown_after_send";
+    recoveryState?: "send_attempt_started" | "unknown_after_send";
   },
 ): void {
   const filePath = path.join(tmpDir, "delivery-queue", `${id}.json`);

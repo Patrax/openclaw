@@ -60,7 +60,7 @@ export interface QueuedDelivery extends QueuedDeliveryPayload {
   lastAttemptAt?: number;
   lastError?: string;
   platformSendStartedAt?: number;
-  recoveryState?: "unknown_after_send";
+  recoveryState?: "send_attempt_started" | "unknown_after_send";
 }
 
 export function resolveQueueDir(stateDir?: string): string {
@@ -218,7 +218,18 @@ export async function failDelivery(id: string, error: string, stateDir?: string)
   await writeQueueEntry(filePath, entry);
 }
 
-export async function markDeliveryPlatformSendStarted(
+export async function markDeliveryPlatformSendAttemptStarted(
+  id: string,
+  stateDir?: string,
+): Promise<void> {
+  const filePath = path.join(resolveQueueDir(stateDir), `${id}.json`);
+  const entry = await readQueueEntry(filePath);
+  entry.platformSendStartedAt = entry.platformSendStartedAt ?? Date.now();
+  entry.recoveryState = "send_attempt_started";
+  await writeQueueEntry(filePath, entry);
+}
+
+export async function markDeliveryPlatformOutcomeUnknown(
   id: string,
   stateDir?: string,
 ): Promise<void> {

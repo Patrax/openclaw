@@ -135,6 +135,34 @@ describe("delivery-queue recovery", () => {
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("unknown_after_send"));
   });
 
+  it("replays entries interrupted before platform outcome is known", async () => {
+    const id = await enqueueDelivery(
+      { channel: "demo-channel-a", to: "+1", payloads: [{ text: "not yet sent" }] },
+      tmpDir(),
+    );
+    setQueuedEntryState(tmpDir(), id, {
+      retryCount: 0,
+      platformSendStartedAt: Date.now(),
+      recoveryState: "send_attempt_started",
+    });
+
+    const deliver = vi.fn().mockResolvedValue([]);
+    const log = createRecoveryLog();
+    const { result } = await runRecovery({ deliver, log });
+
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "demo-channel-a", to: "+1", skipQueue: true }),
+    );
+    expect(result).toEqual({
+      recovered: 1,
+      failed: 0,
+      skippedMaxRetries: 0,
+      deferredBackoff: 0,
+    });
+    expect(await loadPendingDeliveries(tmpDir())).toHaveLength(0);
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("before platform outcome"));
+  });
+
   it("acks unknown-after-send entries reconciled as already sent", async () => {
     const id = await enqueueDelivery(
       {

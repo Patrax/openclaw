@@ -246,6 +246,11 @@ async function drainQueuedEntry(opts: {
   onFailed?: (entry: QueuedDelivery, errMsg: string) => void;
 }): Promise<"recovered" | "failed" | "moved-to-failed" | "already-gone"> {
   const { entry } = opts;
+  if (entry.recoveryState === "send_attempt_started") {
+    opts.log.warn(
+      `Delivery entry ${entry.id} was interrupted before platform outcome was known; replaying`,
+    );
+  }
   if (entry.recoveryState === "unknown_after_send") {
     const reconciliation = await reconcileUnknownQueuedDelivery({
       entry,

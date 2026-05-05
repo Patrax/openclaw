@@ -42,7 +42,8 @@ const queueMocks = vi.hoisted(() => ({
   enqueueDelivery: vi.fn(async () => "mock-queue-id"),
   ackDelivery: vi.fn(async () => {}),
   failDelivery: vi.fn(async () => {}),
-  markDeliveryPlatformSendStarted: vi.fn(async () => {}),
+  markDeliveryPlatformOutcomeUnknown: vi.fn(async () => {}),
+  markDeliveryPlatformSendAttemptStarted: vi.fn(async () => {}),
   withActiveDeliveryClaim: vi.fn<
     (
       entryId: string,
@@ -83,7 +84,8 @@ vi.mock("./delivery-queue.js", () => ({
   enqueueDelivery: queueMocks.enqueueDelivery,
   ackDelivery: queueMocks.ackDelivery,
   failDelivery: queueMocks.failDelivery,
-  markDeliveryPlatformSendStarted: queueMocks.markDeliveryPlatformSendStarted,
+  markDeliveryPlatformOutcomeUnknown: queueMocks.markDeliveryPlatformOutcomeUnknown,
+  markDeliveryPlatformSendAttemptStarted: queueMocks.markDeliveryPlatformSendAttemptStarted,
   withActiveDeliveryClaim: queueMocks.withActiveDeliveryClaim,
 }));
 vi.mock("../../logging/subsystem.js", () => ({
@@ -287,8 +289,10 @@ describe("deliverOutboundPayloads", () => {
     queueMocks.ackDelivery.mockResolvedValue(undefined);
     queueMocks.failDelivery.mockClear();
     queueMocks.failDelivery.mockResolvedValue(undefined);
-    queueMocks.markDeliveryPlatformSendStarted.mockClear();
-    queueMocks.markDeliveryPlatformSendStarted.mockResolvedValue(undefined);
+    queueMocks.markDeliveryPlatformOutcomeUnknown.mockClear();
+    queueMocks.markDeliveryPlatformOutcomeUnknown.mockResolvedValue(undefined);
+    queueMocks.markDeliveryPlatformSendAttemptStarted.mockClear();
+    queueMocks.markDeliveryPlatformSendAttemptStarted.mockResolvedValue(undefined);
     queueMocks.withActiveDeliveryClaim.mockClear();
     queueMocks.withActiveDeliveryClaim.mockImplementation(async (_entryId, fn) => ({
       status: "claimed",
@@ -469,8 +473,11 @@ describe("deliverOutboundPayloads", () => {
     queueMocks.ackDelivery.mockImplementationOnce(async () => {
       order.push("ack");
     });
-    queueMocks.markDeliveryPlatformSendStarted.mockImplementationOnce(async () => {
+    queueMocks.markDeliveryPlatformSendAttemptStarted.mockImplementationOnce(async () => {
       order.push("mark-started");
+    });
+    queueMocks.markDeliveryPlatformOutcomeUnknown.mockImplementationOnce(async () => {
+      order.push("mark-unknown");
     });
     const messageSendText = vi.fn(async () => {
       order.push("send");
@@ -538,6 +545,7 @@ describe("deliverOutboundPayloads", () => {
       "mark-started",
       "send",
       "after:pending-1:message-adapter-1",
+      "mark-unknown",
       "ack",
       "commit:pending-1:message-adapter-1",
     ]);
@@ -586,7 +594,8 @@ describe("deliverOutboundPayloads", () => {
 
     expect(results).toEqual([]);
     expect(sendMatrix).not.toHaveBeenCalled();
-    expect(queueMocks.markDeliveryPlatformSendStarted).not.toHaveBeenCalled();
+    expect(queueMocks.markDeliveryPlatformSendAttemptStarted).not.toHaveBeenCalled();
+    expect(queueMocks.markDeliveryPlatformOutcomeUnknown).not.toHaveBeenCalled();
     expect(queueMocks.ackDelivery).toHaveBeenCalledWith("mock-queue-id");
   });
 
@@ -664,8 +673,10 @@ describe("deliverOutboundPayloads", () => {
     expect(sendMatrix).not.toHaveBeenCalled();
   });
 
-  it("requires the platform-send recovery marker before required durable platform I/O", async () => {
-    queueMocks.markDeliveryPlatformSendStarted.mockRejectedValueOnce(new Error("marker offline"));
+  it("requires the platform-send attempt marker before required durable platform I/O", async () => {
+    queueMocks.markDeliveryPlatformSendAttemptStarted.mockRejectedValueOnce(
+      new Error("marker offline"),
+    );
     const sendMatrix = vi.fn().mockResolvedValue({ messageId: "m1" });
 
     await expect(
@@ -679,13 +690,55 @@ describe("deliverOutboundPayloads", () => {
       }),
     ).rejects.toThrow("marker offline");
 
-    expect(queueMocks.markDeliveryPlatformSendStarted).toHaveBeenCalledWith("mock-queue-id");
+    expect(queueMocks.markDeliveryPlatformSendAttemptStarted).toHaveBeenCalledWith("mock-queue-id");
     expect(sendMatrix).not.toHaveBeenCalled();
     expect(queueMocks.failDelivery).toHaveBeenCalledWith(
       "mock-queue-id",
       expect.stringContaining("marker offline"),
     );
     expect(queueMocks.ackDelivery).not.toHaveBeenCalled();
+  });
+
+  it("fails required delivery when the post-send unknown marker cannot be written", async () => {
+    queueMocks.markDeliveryPlatformOutcomeUnknown.mockRejectedValueOnce(
+      new Error("unknown marker offline"),
+    );
+    const sendMatrix = vi.fn().mockResolvedValue({ messageId: "m1" });
+
+    await expect(
+      deliverOutboundPayloads({
+        cfg: {},
+        channel: "matrix",
+        to: "!room:example",
+        payloads: [{ text: "hi" }],
+        deps: { matrix: sendMatrix },
+        queuePolicy: "required",
+      }),
+    ).rejects.toThrow("unknown marker offline");
+
+    expect(sendMatrix).toHaveBeenCalled();
+    expect(queueMocks.ackDelivery).not.toHaveBeenCalled();
+    expect(queueMocks.failDelivery).not.toHaveBeenCalled();
+  });
+
+  it("fails required delivery when queue ack fails after platform send", async () => {
+    queueMocks.ackDelivery.mockRejectedValueOnce(new Error("ack offline"));
+    const sendMatrix = vi.fn().mockResolvedValue({ messageId: "m1" });
+
+    await expect(
+      deliverOutboundPayloads({
+        cfg: {},
+        channel: "matrix",
+        to: "!room:example",
+        payloads: [{ text: "hi" }],
+        deps: { matrix: sendMatrix },
+        queuePolicy: "required",
+      }),
+    ).rejects.toThrow("ack offline");
+
+    expect(sendMatrix).toHaveBeenCalled();
+    expect(queueMocks.markDeliveryPlatformOutcomeUnknown).toHaveBeenCalledWith("mock-queue-id");
+    expect(queueMocks.failDelivery).not.toHaveBeenCalled();
   });
 
   it("emits bounded delivery diagnostics for successful outbound sends", async () => {

@@ -47,7 +47,8 @@ import {
   ackDelivery,
   enqueueDelivery,
   failDelivery,
-  markDeliveryPlatformSendStarted,
+  markDeliveryPlatformOutcomeUnknown,
+  markDeliveryPlatformSendAttemptStarted,
   type QueuedRenderedMessageBatchPlan,
   withActiveDeliveryClaim,
 } from "./delivery-queue.js";
@@ -572,21 +573,37 @@ function createChannelOutboundContextBase(
 
 const isAbortError = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
 
-async function markQueuedPlatformSendStarted(params: {
+async function markQueuedPlatformSendAttemptStarted(params: {
   queueId: string;
   queuePolicy: OutboundDeliveryQueuePolicy;
 }): Promise<boolean> {
   try {
-    await markDeliveryPlatformSendStarted(params.queueId);
+    await markDeliveryPlatformSendAttemptStarted(params.queueId);
     return true;
   } catch (err: unknown) {
     if (params.queuePolicy === "required") {
       throw err;
     }
     log.warn(
-      `failed to mark queued delivery ${params.queueId} as platform-send-started; continuing best-effort delivery: ${formatErrorMessage(err)}`,
+      `failed to mark queued delivery ${params.queueId} as platform-send-attempt-started; continuing best-effort delivery: ${formatErrorMessage(err)}`,
     );
     return false;
+  }
+}
+
+async function markQueuedPlatformOutcomeUnknown(params: {
+  queueId: string;
+  queuePolicy: OutboundDeliveryQueuePolicy;
+}): Promise<void> {
+  try {
+    await markDeliveryPlatformOutcomeUnknown(params.queueId);
+  } catch (err: unknown) {
+    if (params.queuePolicy === "required") {
+      throw err;
+    }
+    log.warn(
+      `failed to mark queued delivery ${params.queueId} as platform-outcome-unknown; continuing best-effort delivery: ${formatErrorMessage(err)}`,
+    );
   }
 }
 
@@ -1152,6 +1169,8 @@ async function deliverOutboundPayloadsWithQueueCleanup(
         },
       }
     : params;
+  const queuePolicy = params.queuePolicy ?? "best_effort";
+  let platformResultsReturned = false;
 
   try {
     let platformSendStarted = false;
@@ -1163,21 +1182,36 @@ async function deliverOutboundPayloadsWithQueueCleanup(
               if (platformSendStarted) {
                 return;
               }
-              platformSendStarted = await markQueuedPlatformSendStarted({
+              platformSendStarted = await markQueuedPlatformSendAttemptStarted({
                 queueId,
-                queuePolicy: params.queuePolicy ?? "best_effort",
+                queuePolicy,
               });
             },
           }
         : {}),
     });
+    platformResultsReturned = true;
     if (queueId) {
       if (hadPartialFailure) {
         await failDelivery(queueId, "partial delivery failure (bestEffort)").catch(() => {});
       } else {
+        if (platformSendStarted) {
+          await markQueuedPlatformOutcomeUnknown({
+            queueId,
+            queuePolicy,
+          });
+        }
         const acked = await ackDelivery(queueId)
           .then(() => true)
-          .catch(() => false); // Best-effort cleanup.
+          .catch((err: unknown) => {
+            if (queuePolicy === "required") {
+              throw err;
+            }
+            log.warn(
+              `failed to ack queued delivery ${queueId}; continuing best-effort delivery: ${formatErrorMessage(err)}`,
+            );
+            return false;
+          });
         if (acked) {
           await runOutboundDeliveryCommitHooks(results);
         }
@@ -1188,7 +1222,7 @@ async function deliverOutboundPayloadsWithQueueCleanup(
     if (queueId) {
       if (isAbortError(err)) {
         await ackDelivery(queueId).catch(() => {});
-      } else {
+      } else if (!platformResultsReturned) {
         await failDelivery(queueId, formatErrorMessage(err)).catch(() => {});
       }
     }
