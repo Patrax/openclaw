@@ -572,6 +572,24 @@ function createChannelOutboundContextBase(
 
 const isAbortError = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
 
+async function markQueuedPlatformSendStarted(params: {
+  queueId: string;
+  queuePolicy: OutboundDeliveryQueuePolicy;
+}): Promise<boolean> {
+  try {
+    await markDeliveryPlatformSendStarted(params.queueId);
+    return true;
+  } catch (err: unknown) {
+    if (params.queuePolicy === "required") {
+      throw err;
+    }
+    log.warn(
+      `failed to mark queued delivery ${params.queueId} as platform-send-started; continuing best-effort delivery: ${formatErrorMessage(err)}`,
+    );
+    return false;
+  }
+}
+
 type DeliverOutboundPayloadsCoreParams = {
   cfg: OpenClawConfig;
   channel: Exclude<OutboundChannel, "none">;
@@ -1145,8 +1163,10 @@ async function deliverOutboundPayloadsWithQueueCleanup(
               if (platformSendStarted) {
                 return;
               }
-              platformSendStarted = true;
-              await markDeliveryPlatformSendStarted(queueId).catch(() => {});
+              platformSendStarted = await markQueuedPlatformSendStarted({
+                queueId,
+                queuePolicy: params.queuePolicy ?? "best_effort",
+              });
             },
           }
         : {}),

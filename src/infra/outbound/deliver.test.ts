@@ -664,6 +664,30 @@ describe("deliverOutboundPayloads", () => {
     expect(sendMatrix).not.toHaveBeenCalled();
   });
 
+  it("requires the platform-send recovery marker before required durable platform I/O", async () => {
+    queueMocks.markDeliveryPlatformSendStarted.mockRejectedValueOnce(new Error("marker offline"));
+    const sendMatrix = vi.fn().mockResolvedValue({ messageId: "m1" });
+
+    await expect(
+      deliverOutboundPayloads({
+        cfg: {},
+        channel: "matrix",
+        to: "!room:example",
+        payloads: [{ text: "hi" }],
+        deps: { matrix: sendMatrix },
+        queuePolicy: "required",
+      }),
+    ).rejects.toThrow("marker offline");
+
+    expect(queueMocks.markDeliveryPlatformSendStarted).toHaveBeenCalledWith("mock-queue-id");
+    expect(sendMatrix).not.toHaveBeenCalled();
+    expect(queueMocks.failDelivery).toHaveBeenCalledWith(
+      "mock-queue-id",
+      expect.stringContaining("marker offline"),
+    );
+    expect(queueMocks.ackDelivery).not.toHaveBeenCalled();
+  });
+
   it("emits bounded delivery diagnostics for successful outbound sends", async () => {
     const events: DiagnosticEventPayload[] = [];
     const unsubscribe = onInternalDiagnosticEvent((event) => events.push(event));

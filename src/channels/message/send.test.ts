@@ -156,6 +156,39 @@ describe("withDurableMessageSendContext", () => {
     );
   });
 
+  it("forwards the durable send context signal to outbound delivery", async () => {
+    const abortController = new AbortController();
+    deliverOutboundPayloads.mockImplementationOnce(
+      async (params: DeliveryIntentCallbackParams & { abortSignal?: AbortSignal }) => {
+        expect(params.abortSignal).toBe(abortController.signal);
+        return [{ channel: "telegram", messageId: "msg-1" }];
+      },
+    );
+
+    const result = await sendDurableMessageBatch({
+      cfg,
+      channel: "telegram",
+      to: "chat-1",
+      payloads: [{ text: "hello" }],
+      signal: abortController.signal,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: "sent",
+        receipt: expect.objectContaining({
+          platformMessageIds: ["msg-1"],
+        }),
+      }),
+    );
+    expect(deliverOutboundPayloads).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        abortSignal: abortController.signal,
+        queuePolicy: "required",
+      }),
+    );
+  });
+
   it("supports preview, edit, and delete send-context hooks", async () => {
     const receipt = {
       primaryPlatformMessageId: "preview-1",

@@ -19,11 +19,13 @@ import type {
 
 export type DurableMessageBatchSendParams = Omit<
   DeliverOutboundPayloadsParams,
-  "onDeliveryIntent" | "payloads" | "queuePolicy"
+  "abortSignal" | "onDeliveryIntent" | "payloads" | "queuePolicy"
 > & {
   payloads: ReplyPayload[];
   attempt?: number;
   signal?: AbortSignal;
+  /** @deprecated Use `signal`. */
+  abortSignal?: AbortSignal;
   previousReceipt?: MessageReceipt;
 };
 
@@ -97,8 +99,10 @@ export async function withDurableMessageSendContext<T>(
     preview,
     previousReceipt,
     signal,
+    abortSignal,
     ...deliveryParams
   } = params;
+  const effectiveSignal = signal ?? abortSignal;
   let liveState = preview ?? createLiveMessageState<ReplyPayload>();
   const ctx: DurableMessageSendContext = {
     id: `${params.channel}:${params.to}`,
@@ -107,7 +111,7 @@ export async function withDurableMessageSendContext<T>(
     ...(params.accountId ? { accountId: params.accountId } : {}),
     durability: durability ?? "required",
     attempt: attempt ?? 1,
-    signal: signal ?? neverAbortedSignal,
+    signal: effectiveSignal ?? neverAbortedSignal,
     ...(previousReceipt ? { previousReceipt } : {}),
     preview: liveState,
     render: async (): Promise<RenderedMessageBatch<ReplyPayload>> =>
@@ -126,6 +130,7 @@ export async function withDurableMessageSendContext<T>(
           payloads: rendered.payloads,
           renderedBatchPlan: rendered.plan,
           queuePolicy: "required",
+          ...(effectiveSignal ? { abortSignal: effectiveSignal } : {}),
           onDeliveryIntent: (intent) => {
             deliveryIntent = intent;
             ctx.intent = toDurableMessageIntent(intent, rendered);
