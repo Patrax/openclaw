@@ -10,15 +10,24 @@ import type { FinalizedMsgContext } from "../auto-reply/templating.js";
 import {
   hasFinalChannelTurnDispatch,
   hasVisibleChannelTurnDispatch,
+  deliverInboundReplyWithMessageSendContext,
+  isDurableInboundReplyDeliveryHandled,
   resolveChannelTurnDispatchCounts,
   runChannelTurn,
   runPreparedChannelTurn,
+  throwIfDurableInboundReplyDeliveryFailed,
 } from "../channels/turn/kernel.js";
+import type { DurableInboundReplyDeliveryOptions } from "../channels/turn/kernel.js";
 import type { PreparedChannelTurn, RunChannelTurnParams } from "../channels/turn/types.js";
 export type { ChannelTurnRecordOptions } from "../channels/turn/types.js";
+export type { DurableInboundReplyDeliveryParams } from "../channels/turn/kernel.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { createChannelReplyPipeline } from "./channel-reply-pipeline.js";
-import { createNormalizedOutboundDeliverer, type OutboundReplyPayload } from "./reply-payload.js";
+import { createChannelReplyPipeline } from "./channel-reply-core.js";
+import {
+  normalizeOutboundReplyPayload,
+  type OutboundReplyPayload,
+  type ReplyPayload,
+} from "./reply-payload.js";
 
 type ReplyOptionsWithoutModelSelected = Omit<
   Omit<GetReplyOptions, "onBlockReply">,
@@ -45,6 +54,8 @@ export async function runInboundReplyTurn<TRaw, TDispatchResult = DispatchFromCo
 export {
   hasFinalChannelTurnDispatch as hasFinalInboundReplyDispatch,
   hasVisibleChannelTurnDispatch as hasVisibleInboundReplyDispatch,
+  deliverInboundReplyWithMessageSendContext as deliverDurableInboundReplyPayload,
+  deliverInboundReplyWithMessageSendContext,
   resolveChannelTurnDispatchCounts as resolveInboundReplyDispatchCounts,
 };
 
@@ -112,25 +123,40 @@ type RecordInboundSessionAndDispatchReplyParams = Parameters<
   typeof recordInboundSessionAndDispatchReply
 >[0];
 
-/** Resolve the shared dispatch base and immediately record + dispatch one inbound reply turn. */
+/**
+ * Resolve the shared dispatch base and immediately record + dispatch one inbound reply turn.
+ *
+ * @deprecated Legacy inbound reply helper. New channel plugins should expose a
+ * `message` adapter via `defineChannelMessageAdapter(...)` and use
+ * `dispatchChannelMessageReplyWithBase` only for compatibility dispatchers that
+ * have not moved to the message lifecycle yet.
+ */
 export async function dispatchInboundReplyWithBase(
   params: BuildInboundReplyDispatchBaseParams &
     Pick<
       RecordInboundSessionAndDispatchReplyParams,
-      "deliver" | "onRecordError" | "onDispatchError" | "replyOptions"
+      "deliver" | "durable" | "onRecordError" | "onDispatchError" | "replyOptions"
     >,
 ): Promise<void> {
   const dispatchBase = buildInboundReplyDispatchBase(params);
   await recordInboundSessionAndDispatchReply({
     ...dispatchBase,
     deliver: params.deliver,
+    durable: params.durable,
     onRecordError: params.onRecordError,
     onDispatchError: params.onDispatchError,
     replyOptions: params.replyOptions,
   });
 }
 
-/** Record the inbound session first, then dispatch the reply using normalized outbound delivery. */
+/**
+ * Record the inbound session first, then dispatch the reply using normalized outbound delivery.
+ *
+ * @deprecated Legacy inbound reply helper. New channel plugins should expose a
+ * `message` adapter via `defineChannelMessageAdapter(...)` and use
+ * `recordChannelMessageReplyDispatch` only for compatibility dispatchers that
+ * have not moved to the message lifecycle yet.
+ */
 export async function recordInboundSessionAndDispatchReply(params: {
   cfg: OpenClawConfig;
   channel: string;
@@ -142,6 +168,7 @@ export async function recordInboundSessionAndDispatchReply(params: {
   recordInboundSession: RecordInboundSessionFn;
   dispatchReplyWithBufferedBlockDispatcher: DispatchReplyWithBufferedBlockDispatcher;
   deliver: (payload: OutboundReplyPayload) => Promise<void>;
+  durable?: false | DurableInboundReplyDeliveryOptions;
   onRecordError: (err: unknown) => void;
   onDispatchError: (err: unknown, info: { kind: string }) => void;
   replyOptions?: ReplyOptionsWithoutModelSelected;
@@ -152,7 +179,29 @@ export async function recordInboundSessionAndDispatchReply(params: {
     channel: params.channel,
     accountId: params.accountId,
   });
-  const deliver = createNormalizedOutboundDeliverer(params.deliver);
+  const deliver = async (payload: unknown, info: { kind: "tool" | "block" | "final" }) => {
+    const normalized =
+      payload && typeof payload === "object"
+        ? normalizeOutboundReplyPayload(payload as Record<string, unknown>)
+        : {};
+    if (params.durable) {
+      const durable = await deliverInboundReplyWithMessageSendContext({
+        cfg: params.cfg,
+        channel: params.channel,
+        accountId: params.accountId,
+        agentId: params.agentId,
+        ctxPayload: params.ctxPayload,
+        payload: normalized as ReplyPayload,
+        info,
+        ...params.durable,
+      });
+      throwIfDurableInboundReplyDeliveryFailed(durable);
+      if (isDurableInboundReplyDeliveryHandled(durable)) {
+        return;
+      }
+    }
+    await params.deliver(normalized);
+  };
 
   await runPreparedChannelTurn({
     channel: params.channel,
@@ -180,3 +229,10 @@ export async function recordInboundSessionAndDispatchReply(params: {
       }),
   });
 }
+
+export const buildChannelMessageReplyDispatchBase = buildInboundReplyDispatchBase;
+export const dispatchChannelMessageReplyWithBase = dispatchInboundReplyWithBase;
+export const hasFinalChannelMessageReplyDispatch = hasFinalChannelTurnDispatch;
+export const hasVisibleChannelMessageReplyDispatch = hasVisibleChannelTurnDispatch;
+export const recordChannelMessageReplyDispatch = recordInboundSessionAndDispatchReply;
+export const resolveChannelMessageReplyDispatchCounts = resolveChannelTurnDispatchCounts;

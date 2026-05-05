@@ -5,6 +5,8 @@ import {
   createOutboundTestPlugin,
   createTestRegistry,
 } from "../../../test-utils/channel-plugins.js";
+import type { ChannelMessageAdapterShape } from "../../message/types.js";
+import { loadChannelMessageAdapter } from "../message/load.js";
 import { loadChannelOutboundAdapter } from "../outbound/load.js";
 import { createChannelRegistryLoader } from "../registry-loader.js";
 import type { ChannelOutboundAdapter, ChannelPlugin } from "../types.js";
@@ -19,6 +21,11 @@ const demoOutbound: ChannelOutboundAdapter = {
   sendMedia: async () => ({ channel: "demo-loader", messageId: "m2" }),
 };
 
+const demoMessage: ChannelMessageAdapterShape = {
+  id: "demo-loader",
+  durableFinal: { capabilities: { text: true } },
+};
+
 const demoLoaderPlugin: ChannelPlugin = {
   ...createChannelTestPluginBase({
     id: "demo-loader",
@@ -26,6 +33,7 @@ const demoLoaderPlugin: ChannelPlugin = {
     config: { listAccountIds: () => [], resolveAccount: () => ({}) },
   }),
   outbound: demoOutbound,
+  message: demoMessage,
 };
 
 const registryWithDemoLoader = createTestRegistry([
@@ -74,6 +82,14 @@ describe("channel plugin loader", () => {
     expect(await loadChannelOutboundAdapter("demo-loader")).toBe(params.expectedOutbound);
   }
 
+  async function expectLoadedMessageCase(params: {
+    registry: Parameters<typeof setActivePluginRegistry>[0];
+    expectedMessage: ChannelMessageAdapterShape | undefined;
+  }) {
+    setActivePluginRegistry(params.registry);
+    expect(await loadChannelMessageAdapter("demo-loader")).toBe(params.expectedMessage);
+  }
+
   async function expectReloadedLoaderCase(params: {
     load: typeof loadChannelPlugin | typeof loadChannelOutboundAdapter;
     firstRegistry: Parameters<typeof setActivePluginRegistry>[0];
@@ -116,6 +132,12 @@ describe("channel plugin loader", () => {
       expectedOutbound: demoOutbound,
     },
     {
+      name: "loads message adapters from registered plugins",
+      kind: "message" as const,
+      registry: registryWithDemoLoader,
+      expectedMessage: demoMessage,
+    },
+    {
       name: "reads updated plugin values when registry changes",
       kind: "reload-plugin" as const,
       firstRegistry: registryWithDemoLoader,
@@ -148,6 +170,12 @@ describe("channel plugin loader", () => {
         await expectLoadedOutboundCase({
           registry: testCase.registry,
           expectedOutbound: testCase.expectedOutbound,
+        });
+        return;
+      case "message":
+        await expectLoadedMessageCase({
+          registry: testCase.registry,
+          expectedMessage: testCase.expectedMessage,
         });
         return;
       case "reload-plugin":

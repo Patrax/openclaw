@@ -1,3 +1,6 @@
+/**
+ * @deprecated Use `openclaw/plugin-sdk/channel-message` live preview helpers for new code.
+ */
 export type DraftPreviewFinalizerDraft<TId> = {
   flush: () => Promise<void>;
   id: () => TId | undefined;
@@ -6,11 +9,17 @@ export type DraftPreviewFinalizerDraft<TId> = {
   clear: () => Promise<void>;
 };
 
+/**
+ * @deprecated Use `LivePreviewFinalizerResult` from `openclaw/plugin-sdk/channel-message`.
+ */
 export type DraftPreviewFinalizerResult =
   | "normal-delivered"
   | "normal-skipped"
   | "preview-finalized";
 
+/**
+ * @deprecated Use `deliverFinalizableLivePreview` from `openclaw/plugin-sdk/channel-message`.
+ */
 export async function deliverFinalizableDraftPreview<TPayload, TId, TEdit>(params: {
   kind: "tool" | "block" | "final";
   payload: TPayload;
